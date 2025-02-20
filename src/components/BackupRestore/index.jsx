@@ -1,0 +1,143 @@
+import React, { useState } from 'react';
+import {
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Typography,
+  Box,
+  Alert,
+  CircularProgress
+} from '@mui/material';
+import { 
+  Backup as BackupIcon,
+  Restore as RestoreIcon 
+} from '@mui/icons-material';
+import BackupService from '../../services/BackupService';
+import DatabaseService from '../../services/DatabaseService';
+
+const BackupRestore = () => {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  const handleBackup = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      await BackupService.createBackup();
+      setSuccess('Backup created successfully!');
+    } catch (error) {
+      setError('Failed to create backup: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestore = async (event) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const file = event.target.files[0];
+      if (!file) return;
+
+      await BackupService.restoreBackup(file);
+      
+      // Force reload of app data
+      await DatabaseService.initializeDatabase();
+      
+      setSuccess('Data restored successfully! The page will refresh.');
+      // Reload the page after a short delay
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    } catch (error) {
+      setError('Failed to restore backup: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        variant="outlined"
+        startIcon={<BackupIcon />}
+        onClick={() => setOpen(true)}
+      >
+        Backup & Restore
+      </Button>
+
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Backup and Restore</DialogTitle>
+        <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+          {success && (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              {success}
+            </Alert>
+          )}
+          
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, my: 2 }}>
+            <Box>
+              <Typography variant="subtitle1" gutterBottom>
+                Backup Your Data
+              </Typography>
+              <Typography variant="body2" color="text.secondary" paragraph>
+                Download a backup file containing all your financial data.
+              </Typography>
+              <Button
+                variant="contained"
+                startIcon={<BackupIcon />}
+                onClick={handleBackup}
+                disabled={loading}
+              >
+                Create Backup
+              </Button>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle1" gutterBottom>
+                Restore Data
+              </Typography>
+              <Typography variant="body2" color="text.secondary" paragraph>
+                Restore your data from a previous backup file.
+              </Typography>
+              <Button
+                variant="contained"
+                component="label"
+                startIcon={<RestoreIcon />}
+                disabled={loading}
+              >
+                Restore Backup
+                <input
+                  type="file"
+                  hidden
+                  accept=".json"
+                  onChange={handleRestore}
+                />
+              </Button>
+            </Box>
+          </Box>
+
+          {loading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
+              <CircularProgress />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+};
+
+export default BackupRestore; 
