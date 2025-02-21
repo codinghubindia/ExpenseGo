@@ -1,1 +1,1 @@
-{"name":"Financial PWA","short_name":"Financial","start_url":"./","display":"standalone","background_color":"#F1F5F9","lang":"en","scope":"./","description":"A Progressive Web App for managing personal finances","theme_color":"#2563EB","icons":[]}
+{"name":"Financial PWA","short_name":"Financial","start_url":"/ExpenseGo/","display":"standalone","background_color":"#F1F5F9","lang":"en","scope":"/ExpenseGo/","description":"A Progressive Web App for managing personal finances","theme_color":"#2563EB","icons":[]}
