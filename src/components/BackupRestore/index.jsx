@@ -8,7 +8,11 @@ import {
   Typography,
   Box,
   Alert,
-  CircularProgress
+  CircularProgress,
+  FormControl,
+  Select,
+  MenuItem,
+  Stack
 } from '@mui/material';
 import { 
   Backup as BackupIcon,
@@ -22,12 +26,19 @@ const BackupRestore = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [format, setFormat] = useState('DEFAULT');
+
+  const getAcceptedFileTypes = () => {
+    return Object.values(BackupService.BACKUP_FORMATS)
+      .map(format => `.${format.extension}`)
+      .join(',');
+  };
 
   const handleBackup = async () => {
     try {
       setLoading(true);
       setError(null);
-      await BackupService.createBackup();
+      await BackupService.createBackup(format);
       setSuccess('Backup created successfully!');
     } catch (error) {
       setError('Failed to create backup: ' + error.message);
@@ -42,6 +53,14 @@ const BackupRestore = () => {
       setError(null);
       const file = event.target.files[0];
       if (!file) return;
+
+      const extension = file.name.split('.').pop().toLowerCase();
+      const isValidExtension = Object.values(BackupService.BACKUP_FORMATS)
+        .some(format => format.extension === extension);
+
+      if (!isValidExtension) {
+        throw new Error('Invalid backup file format. Please use a valid ExpenseGo backup file.');
+      }
 
       await BackupService.restoreBackup(file);
       
@@ -92,14 +111,28 @@ const BackupRestore = () => {
               <Typography variant="body2" color="text.secondary" paragraph>
                 Download a backup file containing all your financial data.
               </Typography>
-              <Button
-                variant="contained"
-                startIcon={<BackupIcon />}
-                onClick={handleBackup}
-                disabled={loading}
-              >
-                Create Backup
-              </Button>
+              <Stack direction="row" spacing={2} alignItems="center">
+                <FormControl size="small" sx={{ minWidth: 120 }}>
+                  <Select
+                    value={format}
+                    onChange={(e) => setFormat(e.target.value)}
+                  >
+                    {Object.entries(BackupService.BACKUP_FORMATS).map(([key, value]) => (
+                      <MenuItem key={key} value={key}>
+                        {value.description}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <Button
+                  variant="contained"
+                  startIcon={<BackupIcon />}
+                  onClick={handleBackup}
+                  disabled={loading}
+                >
+                  Create Backup
+                </Button>
+              </Stack>
             </Box>
 
             <Box>
@@ -108,6 +141,9 @@ const BackupRestore = () => {
               </Typography>
               <Typography variant="body2" color="text.secondary" paragraph>
                 Restore your data from a previous backup file.
+                Supported formats: {Object.values(BackupService.BACKUP_FORMATS)
+                  .map(format => format.description)
+                  .join(', ')}
               </Typography>
               <Button
                 variant="contained"
@@ -119,7 +155,7 @@ const BackupRestore = () => {
                 <input
                   type="file"
                   hidden
-                  accept=".json"
+                  accept={getAcceptedFileTypes()}
                   onChange={handleRestore}
                 />
               </Button>
@@ -140,4 +176,4 @@ const BackupRestore = () => {
   );
 };
 
-export default BackupRestore; 
+export default BackupRestore;

@@ -2,7 +2,26 @@ import DatabaseService from './DatabaseService';
 import dayjs from 'dayjs';
 
 class BackupService {
-  static async createBackup() {
+  // Define backup formats and extensions
+  static BACKUP_FORMATS = {
+    DEFAULT: {
+      extension: 'backup',
+      mime: 'application/octet-stream',
+      description: 'ExpenseGo Backup'
+    },
+    ENCRYPTED: {
+      extension: 'secure',
+      mime: 'application/octet-stream',
+      description: 'ExpenseGo Encrypted Backup'
+    },
+    PORTABLE: {
+      extension: 'export',
+      mime: 'application/json',
+      description: 'ExpenseGo Portable Export'
+    }
+  };
+
+  static async createBackup(format = 'DEFAULT') {
     try {
       const bankId = 1; // TODO: Get from context
       const year = new Date().getFullYear();
@@ -22,6 +41,7 @@ class BackupService {
       const backup = {
         version: '1.0',
         timestamp: new Date().toISOString(),
+        format: format,
         data: {
           schema: await this.getSchema(),
           accounts,
@@ -30,14 +50,16 @@ class BackupService {
         }
       };
 
-      // Generate backup file
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
+      const formatConfig = this.BACKUP_FORMATS[format] || this.BACKUP_FORMATS.DEFAULT;
+      const blob = new Blob(
+        [JSON.stringify(backup, null, 2)], 
+        { type: formatConfig.mime }
+      );
       
-      // Trigger download
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `financial_backup_${dayjs().format('YYYY-MM-DD')}.json`;
+      link.download = `ExpenseGo_${dayjs().format('YYYY-MM-DD')}.${formatConfig.extension}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -103,6 +125,15 @@ class BackupService {
   }
 
   static async readBackupFile(file) {
+    // Validate file extension
+    const extension = file.name.split('.').pop().toLowerCase();
+    const isValidExtension = Object.values(this.BACKUP_FORMATS)
+      .some(format => format.extension === extension);
+
+    if (!isValidExtension) {
+      throw new Error('Invalid backup file type');
+    }
+
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -121,6 +152,11 @@ class BackupService {
   static validateBackup(backup) {
     // Check version and required fields
     if (!backup.version || !backup.timestamp || !backup.data) {
+      return false;
+    }
+
+    // Validate format if present
+    if (backup.format && !this.BACKUP_FORMATS[backup.format]) {
       return false;
     }
 
@@ -143,4 +179,4 @@ class BackupService {
   }
 }
 
-export default BackupService; 
+export default BackupService;

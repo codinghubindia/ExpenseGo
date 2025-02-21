@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import initSqlJs from 'sql.js';
 import { openDB } from 'idb';
 import dayjs from 'dayjs';
@@ -424,20 +425,25 @@ class DatabaseService {
 
   static async deleteAccount(bankId, year, accountId) {
     try {
-      await this.initializeDatabase(); // Ensure DB is initialized
+      await this.initializeDatabase();
       
-      // Soft delete by setting is_active to 0
+      // First check if account has any transactions
+      const transactions = await this.getTransactionsByAccount(bankId, year, accountId);
+      if (transactions && transactions.length > 0) {
+        throw new Error('Cannot delete account with existing transactions');
+      }
+
+      // Delete the account directly instead of soft delete
       await this.db.exec(`
-        UPDATE accounts_${bankId}_${year}
-        SET 
-          is_active = 0,
-          updated_at = CURRENT_TIMESTAMP
+        DELETE FROM accounts_${bankId}_${year}
         WHERE account_id = ?
       `, [accountId]);
 
       await this.saveToIndexedDB();
+      return true;
     } catch (error) {
       this.handleError(error, 'Error deleting account');
+      throw error;
     }
   }
 
@@ -666,14 +672,14 @@ class DatabaseService {
           date,
           description,
           paymentMethod,
-          location,
-          isRecurring
+          location
         } = transactionData;
 
         const dateStr = dayjs(date).format('YYYY-MM-DD HH:mm:ss');
         const actualCategoryId = type === 'transfer' ? null : categoryId;
         const actualAmount = type === 'expense' ? -Math.abs(amount) : Math.abs(amount);
 
+        // Remove is_recurring from the UPDATE query
         await this.db.exec(`
           UPDATE transactions_${bankId}_${year}
           SET account_id = ?,
@@ -685,7 +691,6 @@ class DatabaseService {
               description = ?,
               payment_method = ?,
               location = ?,
-              is_recurring = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE transaction_id = ?
         `, [
@@ -698,7 +703,6 @@ class DatabaseService {
           description || '',
           paymentMethod || '',
           location || '',
-          isRecurring ? 1 : 0,
           transactionId
         ]);
 
@@ -1309,6 +1313,20 @@ class DatabaseService {
       return true;
     } catch (error) {
       this.handleError(error, 'Error cleaning up duplicate categories');
+    }
+  }
+
+  static async getTransactionsByAccount(bankId, year, accountId) {
+    try {
+      await this.initializeDatabase();
+      const result = await this.db.exec(`
+        SELECT * FROM transactions_${bankId}_${year}
+        WHERE account_id = ? OR to_account_id = ?
+      `, [accountId, accountId]);
+      return result || [];
+    } catch (error) {
+      this.handleError(error, 'Error getting transactions by account');
+      return [];
     }
   }
 }

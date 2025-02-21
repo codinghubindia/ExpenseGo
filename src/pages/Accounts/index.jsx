@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+/* eslint-disable react/no-unescaped-entities */
+import { useState, useEffect } from 'react';
 import {
   Container,
   Paper,
@@ -20,7 +21,9 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Box
+  Box,
+  Alert,
+  Snackbar
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -44,6 +47,9 @@ const Accounts = () => {
     icon: '💰',
     notes: ''
   });
+  const [error, setError] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(false);
+  const [accountToDelete, setAccountToDelete] = useState(null);
 
   useEffect(() => {
     loadAccounts();
@@ -85,17 +91,40 @@ const Accounts = () => {
     }
   };
 
-  const handleDelete = async (accountId) => {
-    if (window.confirm('Are you sure you want to delete this account? This will delete all associated transactions.')) {
-      try {
-        const bankId = 1; // TODO: Get from context
-        const year = new Date().getFullYear();
-        await DatabaseService.deleteAccount(bankId, year, accountId);
-        await loadAccounts();
-      } catch (error) {
-        console.error('Error deleting account:', error);
-        // TODO: Show error notification
+  const handleDelete = async (account) => {
+    try {
+      const bankId = 1; // TODO: Get from context
+      const year = new Date().getFullYear();
+      
+      // Check if account has transactions
+      const transactions = await DatabaseService.getTransactionsByAccount(bankId, year, account.accountId);
+      
+      if (transactions && transactions.length > 0) {
+        setError(`Cannot delete account "${account.name}" because it has ${transactions.length} transactions. Please delete or move the transactions first.`);
+        return;
       }
+
+      setAccountToDelete(account);
+      setConfirmDialog(true);
+    } catch (error) {
+      console.error('Error checking account transactions:', error);
+      setError('Failed to check account transactions');
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    try {
+      const bankId = 1;
+      const year = new Date().getFullYear();
+      
+      await DatabaseService.deleteAccount(bankId, year, accountToDelete.accountId);
+      await loadAccounts();
+      setConfirmDialog(false);
+      setAccountToDelete(null);
+      setError(null); // Clear any existing errors
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      setError(error.message || 'Failed to delete account');
     }
   };
 
@@ -212,7 +241,7 @@ const Accounts = () => {
                     </IconButton>
                     <IconButton
                       color="error"
-                      onClick={() => handleDelete(account.accountId)}
+                      onClick={() => handleDelete(account)}
                     >
                       <DeleteIcon />
                     </IconButton>
@@ -310,8 +339,41 @@ const Accounts = () => {
           </DialogActions>
         </form>
       </Dialog>
+
+      <Snackbar 
+        open={Boolean(error)} 
+        autoHideDuration={6000} 
+        onClose={() => setError(null)}
+      >
+        <Alert onClose={() => setError(null)} severity="error">
+          {error}
+        </Alert>
+      </Snackbar>
+
+      <Dialog
+        open={confirmDialog}
+        onClose={() => setConfirmDialog(false)}
+      >
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete account "{accountToDelete?.name}"? 
+            This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDialog(false)}>Cancel</Button>
+          <Button 
+            onClick={handleConfirmDelete} 
+            color="error" 
+            variant="contained"
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };
 
-export default Accounts; 
+export default Accounts;

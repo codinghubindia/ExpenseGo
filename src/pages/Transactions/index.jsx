@@ -17,16 +17,16 @@ import {
   Alert,
   Card,
   CardContent,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
   Search as SearchIcon,
-  ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -46,6 +46,7 @@ const Transactions = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [formData, setFormData] = useState({
+    transactionId: null,  // Add this line
     type: 'expense',
     amount: '',
     date: dayjs(),
@@ -64,7 +65,7 @@ const Transactions = () => {
     accountId: 'all',
     categoryId: 'all'
   });
-  const [expanded, setExpanded] = useState(false);
+  const [openDialog, setOpenDialog] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -94,16 +95,18 @@ const Transactions = () => {
 
   const handleEditTransaction = (transaction) => {
     setFormData({
+      transactionId: transaction.transactionId,
       type: transaction.type,
-      amount: transaction.amount,
+      amount: Math.abs(transaction.amount), // Remove negative sign for expenses
       date: dayjs(transaction.date),
       accountId: transaction.accountId,
-      toAccountId: transaction.toAccountId,
-      categoryId: transaction.categoryId,
+      toAccountId: transaction.toAccountId || '',
+      categoryId: transaction.categoryId || '',
       description: transaction.description,
       paymentMethod: transaction.paymentMethod,
-      location: transaction.location
+      location: transaction.location || ''
     });
+    setOpenDialog(true);
   };
 
   const handleSubmit = async (e) => {
@@ -112,27 +115,54 @@ const Transactions = () => {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
 
+      // Remove isRecurring from transactionData
+      const transactionData = {
+        type: formData.type,
+        amount: formData.type === 'expense' ? -Math.abs(Number(formData.amount)) : Number(formData.amount),
+        date: formData.date.toISOString(),
+        accountId: formData.accountId,
+        toAccountId: formData.type === 'transfer' ? formData.toAccountId : null,
+        categoryId: formData.type === 'transfer' ? null : formData.categoryId,
+        description: formData.description,
+        paymentMethod: formData.paymentMethod || 'cash',
+        location: formData.location || ''
+      };
+
       if (formData.transactionId) {
-        await DatabaseService.updateTransaction(bankId, year, formData.transactionId, formData);
+        await DatabaseService.updateTransaction(
+          bankId,
+          year,
+          formData.transactionId,
+          transactionData
+        );
       } else {
-        await DatabaseService.createTransaction(bankId, year, formData);
+        await DatabaseService.createTransaction(bankId, year, transactionData);
       }
 
-      setFormData({
-        type: 'expense',
-        amount: '',
-        date: dayjs(),
-        accountId: '',
-        toAccountId: '',
-        categoryId: '',
-        description: '',
-        paymentMethod: 'cash',
-        location: ''
-      });
       await loadData();
+      handleCloseDialog();
+      setError(null);
     } catch (err) {
-      setError(err.message);
+      console.error('Transaction error:', err);
+      setError(err.message || 'Failed to save transaction');
     }
+  };
+
+  const handleCloseDialog = () => {
+    setFormData({
+      transactionId: null,
+      type: 'expense',
+      amount: '',
+      date: dayjs(),
+      accountId: '',
+      toAccountId: '',
+      categoryId: '',
+      description: '',
+      paymentMethod: 'cash',
+      location: ''
+    });
+    setOpenDialog(false);
+    setError(null);
   };
 
   const filteredTransactions = transactions.filter(t => {
@@ -164,10 +194,6 @@ const Transactions = () => {
         // TODO: Show error notification
       }
     }
-  };
-
-  const handleAccordionChange = (event, isExpanded) => {
-    setExpanded(isExpanded);
   };
 
   // Add formatCurrency function
@@ -223,7 +249,7 @@ const Transactions = () => {
           <Button
             variant="contained"
             startIcon={<AddIcon />}
-            onClick={() => setExpanded(true)}
+            onClick={() => setOpenDialog(true)}
           >
             Add Transaction
           </Button>
@@ -314,199 +340,150 @@ const Transactions = () => {
             </Card>
           </Grid>
 
-          {/* Transaction Form */}
-          <Grid item xs={12}>
-            <Accordion 
-              expanded={expanded} 
-              onChange={handleAccordionChange}
-              sx={{
-                mb: 3,
-                '&:before': { display: 'none' },
-                boxShadow: theme.shadows[2],
-                borderRadius: '16px !important',
-                '& .MuiAccordionSummary-root': {
-                  borderRadius: expanded ? '16px 16px 0 0' : '16px',
-                },
-                '& .MuiAccordionDetails-root': {
-                  borderRadius: '0 0 16px 16px',
-                }
-              }}
-            >
-              <AccordionSummary
-                expandIcon={<ExpandMoreIcon />}
-                sx={{
-                  bgcolor: 'background.paper',
-                  borderRadius: expanded ? '16px 16px 0 0' : '16px',
-                  '&:hover': { bgcolor: 'background.subtle' }
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <AddIcon color="primary" />
-                  <Typography variant="h6">
-                    {formData.transactionId ? 'Edit Transaction' : 'Add New Transaction'}
-                  </Typography>
-                </Box>
-              </AccordionSummary>
-              <AccordionDetails
-                sx={{
-                  bgcolor: 'background.paper',
-                  borderRadius: '0 0 16px 16px',
-                  pt: 0
-                }}
-              >
-                <form onSubmit={handleSubmit}>
-                  <Stack spacing={2}>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} md={4}>
-                        <FormControl fullWidth>
-                          <InputLabel>Type</InputLabel>
-                          <Select
-                            value={formData.type}
-                            onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                            label="Type"
-                          >
-                            <MenuItem value="expense">Expense</MenuItem>
-                            <MenuItem value="income">Income</MenuItem>
-                            <MenuItem value="transfer">Transfer</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
+          {/* Transaction Form Dialog */}
+          <Dialog 
+            open={openDialog} 
+            onClose={handleCloseDialog}
+            maxWidth="md"
+            fullWidth
+          >
+            <DialogTitle>
+              {formData.transactionId ? 'Edit Transaction' : 'Add New Transaction'}
+            </DialogTitle>
+            <form onSubmit={handleSubmit}>
+              <DialogContent>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={4}>
+                    <FormControl fullWidth>
+                      <InputLabel>Type</InputLabel>
+                      <Select
+                        value={formData.type}
+                        onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                        label="Type"
+                      >
+                        <MenuItem value="expense">Expense</MenuItem>
+                        <MenuItem value="income">Income</MenuItem>
+                        <MenuItem value="transfer">Transfer</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
 
-                      <Grid item xs={12} md={4}>
-                        {amountInput}
-                      </Grid>
+                  <Grid item xs={12} md={4}>
+                    {amountInput}
+                  </Grid>
 
-                      <Grid item xs={12} md={4}>
-                        <DatePicker
-                          label="Date"
-                          value={formData.date}
-                          onChange={(newDate) => setFormData({ ...formData, date: newDate })}
-                          slotProps={{ textField: { fullWidth: true } }}
-                        />
-                      </Grid>
+                  <Grid item xs={12} md={4}>
+                    <DatePicker
+                      label="Date"
+                      value={formData.date}
+                      onChange={(newDate) => setFormData({ ...formData, date: newDate })}
+                      slotProps={{ textField: { fullWidth: true } }}
+                    />
+                  </Grid>
 
-                      <Grid item xs={12} md={6}>
-                        <FormControl fullWidth>
-                          <InputLabel>Account</InputLabel>
-                          <Select
-                            value={formData.accountId}
-                            onChange={(e) => setFormData({ ...formData, accountId: e.target.value })}
-                            label="Account"
-                            required
-                          >
-                            {accounts.map(account => (
-                              <MenuItem key={account.accountId} value={account.accountId}>
-                                {account.name}
+                  <Grid item xs={12} md={6}>
+                    <FormControl fullWidth>
+                      <InputLabel>Account</InputLabel>
+                      <Select
+                        value={formData.accountId}
+                        onChange={(e) => setFormData({ ...formData, accountId: e.target.value })}
+                        label="Account"
+                        required
+                      >
+                        {accounts.map(account => (
+                          <MenuItem key={account.accountId} value={account.accountId}>
+                            {account.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+
+                  {formData.type === 'transfer' ? (
+                    <Grid item xs={12} md={6}>
+                      <FormControl fullWidth>
+                        <InputLabel>To Account</InputLabel>
+                        <Select
+                          value={formData.toAccountId}
+                          onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
+                          label="To Account"
+                          required
+                        >
+                          {accounts.map(account => (
+                            <MenuItem key={account.accountId} value={account.accountId}>
+                              {account.name}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  ) : (
+                    <Grid item xs={12} md={6}>
+                      <FormControl fullWidth>
+                        <InputLabel>Category</InputLabel>
+                        <Select
+                          value={formData.categoryId}
+                          onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
+                          label="Category"
+                          required
+                        >
+                          {categories
+                            .filter(cat => cat.type === formData.type)
+                            .map(category => (
+                              <MenuItem key={category.categoryId} value={category.categoryId}>
+                                {category.name}
                               </MenuItem>
                             ))}
-                          </Select>
-                        </FormControl>
-                      </Grid>
-
-                      {formData.type === 'transfer' ? (
-                        <Grid item xs={12} md={6}>
-                          <FormControl fullWidth>
-                            <InputLabel>To Account</InputLabel>
-                            <Select
-                              value={formData.toAccountId}
-                              onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
-                              label="To Account"
-                              required
-                            >
-                              {accounts.map(account => (
-                                <MenuItem key={account.accountId} value={account.accountId}>
-                                  {account.name}
-                                </MenuItem>
-                              ))}
-                            </Select>
-                          </FormControl>
-                        </Grid>
-                      ) : (
-                        <Grid item xs={12} md={6}>
-                          <FormControl fullWidth>
-                            <InputLabel>Category</InputLabel>
-                            <Select
-                              value={formData.categoryId}
-                              onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                              label="Category"
-                              required
-                            >
-                              {categories
-                                .filter(cat => cat.type === formData.type)
-                                .map(category => (
-                                  <MenuItem key={category.categoryId} value={category.categoryId}>
-                                    {category.name}
-                                  </MenuItem>
-                                ))}
-                            </Select>
-                          </FormControl>
-                        </Grid>
-                      )}
-
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          fullWidth
-                          label="Description"
-                          value={formData.description}
-                          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                          required
-                        />
-                      </Grid>
-
-                      <Grid item xs={12} md={3}>
-                        <FormControl fullWidth>
-                          <InputLabel>Payment Method</InputLabel>
-                          <Select
-                            value={formData.paymentMethod}
-                            onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
-                            label="Payment Method"
-                          >
-                            <MenuItem value="cash">Cash</MenuItem>
-                            <MenuItem value="card">Card</MenuItem>
-                            <MenuItem value="bank">Bank Transfer</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
-
-                      <Grid item xs={12} md={3}>
-                        <TextField
-                          fullWidth
-                          label="Location"
-                          value={formData.location}
-                          onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                        />
-                      </Grid>
+                        </Select>
+                      </FormControl>
                     </Grid>
+                  )}
 
-                    <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end', mt: 2 }}>
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          setFormData({
-                            type: 'expense',
-                            amount: '',
-                            date: dayjs(),
-                            accountId: '',
-                            toAccountId: '',
-                            categoryId: '',
-                            description: '',
-                            paymentMethod: 'cash',
-                            location: ''
-                          });
-                          setExpanded(false);
-                        }}
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Description"
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      required
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={3}>
+                    <FormControl fullWidth>
+                      <InputLabel>Payment Method</InputLabel>
+                      <Select
+                        value={formData.paymentMethod}
+                        onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
+                        label="Payment Method"
                       >
-                        Cancel
-                      </Button>
-                      <Button type="submit" variant="contained">
-                        {formData.transactionId ? 'Update' : 'Add'} Transaction
-                      </Button>
-                    </Box>
-                  </Stack>
-                </form>
-              </AccordionDetails>
-            </Accordion>
-          </Grid>
+                        <MenuItem value="cash">Cash</MenuItem>
+                        <MenuItem value="card">Card</MenuItem>
+                        <MenuItem value="bank">Bank Transfer</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+
+                  <Grid item xs={12} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Location"
+                      value={formData.location}
+                      onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                    />
+                  </Grid>
+                </Grid>
+              </DialogContent>
+              <DialogActions sx={{ p: 2 }}>
+                <Button onClick={handleCloseDialog}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="contained">
+                  {formData.transactionId ? 'Update' : 'Add'} Transaction
+                </Button>
+              </DialogActions>
+            </form>
+          </Dialog>
 
           {/* Transactions List */}
           <Grid item xs={12}>
