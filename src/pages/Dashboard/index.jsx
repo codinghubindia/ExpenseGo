@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Box,
   Grid,
-  Paper,
   Typography,
   Card,
   CardContent,
@@ -15,7 +14,6 @@ import {
 } from '@mui/material';
 import {
   TrendingUp,
-  TrendingDown,
   MoreVert,
   Add as AddIcon,
   ArrowUpward,
@@ -39,11 +37,13 @@ import {
 import { useApp } from '../../contexts/AppContext';
 import DatabaseService from '../../services/DatabaseService';
 import TransactionForm from '../../components/TransactionForm';
+import { useRegion } from '../../contexts/RegionContext';
 
 const Dashboard = () => {
   const theme = useTheme();
   const { currentBank, currentYear } = useApp();
   const [accounts, setAccounts] = useState([]);
+  const { currency } = useRegion();
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +53,13 @@ const Dashboard = () => {
   useEffect(() => {
     loadDashboardData();
   }, [currentBank, currentYear]);
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: currency.code
+    }).format(amount);
+  };
 
   const loadDashboardData = async () => {
     try {
@@ -167,7 +174,7 @@ const Dashboard = () => {
                 </IconButton>
               </Box>
               <Typography variant="h4" fontWeight="bold">
-                ${getTotalBalance().toLocaleString()}
+                {formatCurrency(getTotalBalance())}
               </Typography>
               <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
                 <Chip
@@ -195,7 +202,7 @@ const Dashboard = () => {
                 <ArrowUpward color="success" />
               </Box>
               <Typography variant="h4" fontWeight="bold" color="success.main">
-                ${getMonthlyIncome().toLocaleString()}
+                {formatCurrency(getMonthlyIncome())}
               </Typography>
               <LinearProgress
                 variant="determinate"
@@ -220,7 +227,7 @@ const Dashboard = () => {
                 <ArrowDownward color="error" />
               </Box>
               <Typography variant="h4" fontWeight="bold" color="error.main">
-                ${getMonthlyExpenses().toLocaleString()}
+                {formatCurrency(getMonthlyExpenses())}
               </Typography>
               <LinearProgress
                 variant="determinate"
@@ -264,14 +271,14 @@ const Dashboard = () => {
                     <YAxis 
                       stroke={theme.palette.text.secondary}
                       style={{ fontSize: '0.75rem' }}
-                      tickFormatter={(value) => `$${value}`}
+                      tickFormatter={(value) => formatCurrency(value)}
                     />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: theme.palette.background.paper,
                         border: `1px solid ${theme.palette.divider}`
                       }}
-                      formatter={(value) => [`$${value}`, '']}
+                      formatter={(value) => [formatCurrency(value), '']}
                     />
                     <Area
                       type="monotone"
@@ -325,7 +332,7 @@ const Dashboard = () => {
                         backgroundColor: theme.palette.background.paper,
                         border: `1px solid ${theme.palette.divider}`
                       }}
-                      formatter={(value) => [`$${value}`, '']}
+                      formatter={(value) => [formatCurrency(value), '']}
                     />
                     <Legend 
                       verticalAlign="bottom" 
@@ -367,14 +374,14 @@ const Dashboard = () => {
                     <YAxis
                       stroke={theme.palette.text.secondary}
                       style={{ fontSize: '0.75rem' }}
-                      tickFormatter={(value) => `$${Math.abs(value)}`}
+                      tickFormatter={(value) => formatCurrency(Math.abs(value))}
                     />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: theme.palette.background.paper,
                         border: `1px solid ${theme.palette.divider}`
                       }}
-                      formatter={(value) => [`$${Math.abs(value)}`, '']}
+                      formatter={(value) => [formatCurrency(Math.abs(value)), '']}
                     />
                     <Bar 
                       dataKey="amount"
@@ -414,7 +421,7 @@ const Dashboard = () => {
                       color={transaction.type === 'income' ? 'success.main' : 'error.main'}
                     >
                       {transaction.type === 'income' ? '+' : '-'}
-                      ${Math.abs(transaction.amount).toLocaleString()}
+                      {formatCurrency(Math.abs(transaction.amount))}
                     </Typography>
                   </Box>
                 ))}
@@ -435,4 +442,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard; 
+export default Dashboard;

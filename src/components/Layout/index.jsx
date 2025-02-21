@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import React from 'react';
 import {
   Box,
@@ -28,7 +29,7 @@ import {
   DarkMode,
   LightMode,
   Computer,
-  Backup as BackupIcon
+  Settings,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../../contexts/AppContext';
@@ -50,7 +51,8 @@ const Layout = ({ children }) => {
     { text: 'Accounts', icon: <AccountBalance />, path: '/accounts' },
     { text: 'Transactions', icon: <Payment />, path: '/transactions' },
     { text: 'Categories', icon: <Category />, path: '/categories' },
-    { text: 'Reports', icon: <Assessment />, path: '/reports' }
+    { text: 'Reports', icon: <Assessment />, path: '/reports' },
+    { text: 'Settings', icon: <Settings />, path: '/settings' }
   ];
 
   const handleDrawerToggle = () => {

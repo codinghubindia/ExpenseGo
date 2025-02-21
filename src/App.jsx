@@ -1,7 +1,10 @@
+/* eslint-disable react/prop-types */
 import React from 'react';
 import { Box, CssBaseline, ThemeProvider, useMediaQuery } from '@mui/material';
 import { AppProvider, useApp } from './contexts/AppContext';
 import { createAppTheme } from './styles/theme';
+import { RegionProvider } from './contexts/RegionContext';
+
 import AppRoutes from './routes';
 
 const App = () => {
@@ -35,7 +38,9 @@ const ThemedApp = ({ systemTheme }) => {
           color: 'text.primary'
         }}
       >
-        <AppRoutes />
+        <RegionProvider>
+          <AppRoutes />
+        </RegionProvider>  
       </Box>
     </ThemeProvider>
   );

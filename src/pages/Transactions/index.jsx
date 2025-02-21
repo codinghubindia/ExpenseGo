@@ -1,7 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import {
-  Container,
-  Paper,
   Typography,
   Button,
   Box,
@@ -13,7 +11,6 @@ import {
   Grid,
   CircularProgress,
   Stack,
-  Chip,
   IconButton,
   useTheme,
   InputAdornment,
@@ -37,10 +34,12 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs from 'dayjs';
 import { useApp } from '../../contexts/AppContext';
 import DatabaseService from '../../services/DatabaseService';
+import { useRegion } from '../../contexts/RegionContext';
 
 const Transactions = () => {
   const theme = useTheme();
   const { currentBank, currentYear } = useApp();
+  const { currency } = useRegion(); // Add RegionContext usage
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -170,6 +169,48 @@ const Transactions = () => {
   const handleAccordionChange = (event, isExpanded) => {
     setExpanded(isExpanded);
   };
+
+  // Add formatCurrency function
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: currency.code,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(Math.abs(amount));
+  };
+
+  // Update amount input in form
+  const amountInput = (
+    <TextField
+      fullWidth
+      label="Amount"
+      type="number"
+      value={formData.amount}
+      onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+      required
+      InputProps={{
+        startAdornment: <InputAdornment position="start">{currency.symbol}</InputAdornment>
+      }}
+    />
+  );
+
+  // Update transaction amount display
+  const renderTransactionAmount = (transaction) => (
+    <Typography
+      variant="subtitle1"
+      color={
+        transaction.type === 'income' ? 'success.main' :
+        transaction.type === 'expense' ? 'error.main' :
+        'primary.main'
+      }
+      sx={{ fontWeight: 600 }}
+    >
+      {transaction.type === 'income' ? '+' : 
+       transaction.type === 'expense' ? '-' : ''}
+      {formatCurrency(transaction.amount)}
+    </Typography>
+  );
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -332,17 +373,7 @@ const Transactions = () => {
                       </Grid>
 
                       <Grid item xs={12} md={4}>
-                        <TextField
-                          fullWidth
-                          label="Amount"
-                          type="number"
-                          value={formData.amount}
-                          onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                          required
-                          InputProps={{
-                            startAdornment: <InputAdornment position="start">$</InputAdornment>
-                          }}
-                        />
+                        {amountInput}
                       </Grid>
 
                       <Grid item xs={12} md={4}>
@@ -573,19 +604,7 @@ const Transactions = () => {
                           </Box>
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          <Typography
-                            variant="subtitle1"
-                            color={
-                              transaction.type === 'income' ? 'success.main' :
-                              transaction.type === 'expense' ? 'error.main' :
-                              'primary.main'
-                            }
-                            sx={{ fontWeight: 600 }}
-                          >
-                            {transaction.type === 'income' ? '+' : 
-                             transaction.type === 'expense' ? '-' : ''}
-                            ${Math.abs(transaction.amount).toLocaleString()}
-                          </Typography>
+                          {renderTransactionAmount(transaction)}
                           <Box sx={{ 
                             opacity: 0,
                             transition: 'opacity 0.2s',
@@ -622,4 +641,4 @@ const Transactions = () => {
   );
 };
 
-export default Transactions; 
+export default Transactions;

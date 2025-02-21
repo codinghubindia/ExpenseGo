@@ -81,11 +81,11 @@ define(['./workbox-d9a5ed57'], (function (workbox) { 'use strict';
     "url": "registerSW.js",
     "revision": "ccd5f4627cd3b1a8ec5260c016f8deac"
   }, {
-    "url": "index.html",
-    "revision": "0.p9e9hbmrfag"
+    "url": "offline.html",
+    "revision": "0.5egvushage8"
   }], {});
   workbox.cleanupOutdatedCaches();
-  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
+  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("offline.html"), {
     allowlist: [/^\/$/]
   }));
   workbox.registerRoute(/^https:\/\/sql\.js\.org\/.*$/, new workbox.CacheFirst({

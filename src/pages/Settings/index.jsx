@@ -1,4 +1,5 @@
-import { useState } from 'react';
+/* eslint-disable no-unused-vars */
+import { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -13,33 +14,107 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField
+  TextField,
+  Select,
+  MenuItem,
+  FormControl,
+  Alert,
 } from '@mui/material';
-import DatabaseService from '../../services/DatabaseService';
+import { useRegion } from '../../contexts/RegionContext';
+import { regionSettings } from '../../contexts/RegionContext';
 
 function Settings() {
+  const { region, updateRegion } = useRegion();
   const [darkMode, setDarkMode] = useState(false);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Add default region handling
+  useEffect(() => {
+    if (!region) {
+      updateRegion('IN');
+    }
+  }, [region, updateRegion]);
+
+  const handleRegionChange = (event) => {
+    try {
+      const newRegion = event.target.value;
+      updateRegion(newRegion);
+      localStorage.setItem('userRegion', newRegion); // Persist the selection
+    } catch (err) {
+      setError('Failed to update region settings');
+    }
+  };
 
   const handleBackup = async () => {
-    // TODO: Implement backup functionality
-    setBackupDialogOpen(false);
+    try {
+      // TODO: Implement backup functionality
+      setBackupDialogOpen(false);
+    } catch (err) {
+      setError('Failed to create backup');
+    }
   };
 
   const handleSetPin = async () => {
-    // TODO: Implement PIN setting
-    setPinDialogOpen(false);
+    try {
+      // TODO: Implement PIN setting
+      setPinDialogOpen(false);
+    } catch (err) {
+      setError('Failed to set PIN');
+    }
   };
+
+  // Update the error check to handle initialization
+  if (!region || !regionSettings[region]) {
+    const defaultRegion = 'IN';
+    updateRegion(defaultRegion);
+    return (
+      <Box>
+        <Alert severity="info">
+          Setting default region to India...
+        </Alert>
+      </Box>
+    );
+  }
 
   return (
     <Box>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
       <Typography variant="h4" gutterBottom>
         Settings
       </Typography>
 
       <Paper>
         <List>
+          <ListItem>
+            <ListItemText 
+              primary="Region Settings" 
+              secondary={`Current region: ${regionSettings[region].name}`} 
+            />
+            <ListItemSecondaryAction>
+              <FormControl variant="outlined" sx={{ minWidth: 120 }}>
+                <Select
+                  value={region}
+                  onChange={handleRegionChange}
+                  size="small"
+                >
+                  {Object.entries(regionSettings).map(([code, data]) => (
+                    <MenuItem key={code} value={code}>
+                      {data.name} ({data.currency.symbol})
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </ListItemSecondaryAction>
+          </ListItem>
+
+          {/* Existing Settings Items */}
           <ListItem>
             <ListItemText primary="Dark Mode" secondary="Enable dark color theme" />
             <ListItemSecondaryAction>
@@ -108,4 +183,4 @@ function Settings() {
   );
 }
 
-export default Settings; 
+export default Settings;

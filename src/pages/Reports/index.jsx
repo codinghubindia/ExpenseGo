@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Container,
   Grid,
@@ -20,24 +20,16 @@ import {
   TextField,
   Checkbox,
   FormControlLabel,
-  List,
-  ListItem,
-  ListItemText,
   Divider,
   Card,
   CardContent,
   useTheme,
-  Stack,
-  IconButton,
-  Tooltip
+  Tooltip,
+  Alert
 } from '@mui/material';
 import {
-  BarChart,
-  Bar,
   PieChart,
   Pie,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -46,9 +38,7 @@ import {
   ResponsiveContainer,
   Cell,
   Area,
-  AreaChart,
-  RadialBarChart,
-  RadialBar
+  AreaChart
 } from 'recharts';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -58,20 +48,20 @@ import DatabaseService from '../../services/DatabaseService';
 import {
   FileDownload as ExportIcon,
   Add as AddIcon,
-  Download as DownloadIcon,
-  FilterList as FilterIcon,
   ArrowUpward,
   ArrowDownward
 } from '@mui/icons-material';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
-import html2canvas from 'html2canvas';
 import { useApp } from '../../contexts/AppContext';
+import { useRegion } from '../../contexts/RegionContext';
 import PropTypes from 'prop-types';
 
-const CustomTooltip = ({ active, payload, label }) => {
+// First, update the CustomTooltip component to receive formatCurrency as a prop
+const CustomTooltip = ({ active, payload, label, formatCurrency }) => {
   const theme = useTheme();
-  
+  const { currency } = useRegion();
+
   if (active && payload && payload.length) {
     return (
       <Box
@@ -98,7 +88,7 @@ const CustomTooltip = ({ active, payload, label }) => {
               }}
             />
             <Typography variant="body2">
-              {entry.name}: ${entry.value.toLocaleString()}
+              {entry.name}: {formatCurrency(entry.value)}
             </Typography>
           </Box>
         ))}
@@ -108,6 +98,7 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
+// Update PropTypes to include formatCurrency
 CustomTooltip.propTypes = {
   active: PropTypes.bool,
   payload: PropTypes.arrayOf(
@@ -117,12 +108,14 @@ CustomTooltip.propTypes = {
       color: PropTypes.string
     })
   ),
-  label: PropTypes.string
+  label: PropTypes.string,
+  formatCurrency: PropTypes.func.isRequired
 };
 
 const Reports = () => {
   const theme = useTheme();
   const { currentBank, currentYear } = useApp();
+  const { currency } = useRegion(); // Add RegionContext usage
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [timeframe, setTimeframe] = useState('month');
@@ -189,15 +182,10 @@ const Reports = () => {
     { text: 'Account Balances', value: 'balance' }
   ];
 
-  // Add handler for menu item clicks
-  const handleReportTypeClick = (type) => {
-    setCustomReport(prev => ({
-      ...prev,
-      type: type.value
-    }));
-  };
+  // Add error state
+  const [error, setError] = useState(null);
 
-  const loadReportData = async () => {
+  const loadReportData = useCallback(async () => {
     try {
       setLoading(true);
       const bankId = currentBank?.bankId || 1;
@@ -378,10 +366,10 @@ const Reports = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentBank, currentYear, timeframe, exportOptions, exportFilters]);
 
   // Load accounts and categories for filters
-  const loadFilterData = async () => {
+  const loadFilterData = useCallback(async () => {
     try {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
@@ -396,7 +384,7 @@ const Reports = () => {
     } catch (error) {
       console.error('Error loading filter data:', error);
     }
-  };
+  }, [currentBank, currentYear]);
 
   // Memoize loadData functions
   const loadData = useCallback(async () => {
@@ -406,47 +394,25 @@ const Reports = () => {
     } catch (err) {
       setError(err.message);
     }
-  }, [currentBank, currentYear]);
+  }, [currentBank, currentYear, loadReportData, loadFilterData]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const formatCurrency = (amount, currency = 'USD') => {
+  // In the Reports component, define formatCurrency using the currency from context
+  const formatCurrency = useCallback((amount) => {
     if (typeof amount !== 'number') {
       return '0';
     }
 
-    const formatOptions = {
+    return new Intl.NumberFormat(undefined, {
       style: 'currency',
+      currency: currency.code,
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    };
-
-    try {
-      switch (currency) {
-        case 'INR':
-          return new Intl.NumberFormat('en-IN', {
-            ...formatOptions,
-            currency: 'INR'
-          }).format(amount);
-        case 'USD':
-          return new Intl.NumberFormat('en-US', {
-            ...formatOptions,
-            currency: 'USD'
-          }).format(amount);
-        default:
-          // Default to USD if currency is invalid
-          return new Intl.NumberFormat('en-US', {
-            ...formatOptions,
-            currency: 'USD'
     }).format(amount);
-      }
-    } catch (error) {
-      console.error('Currency formatting error:', error);
-      return amount.toLocaleString();
-    }
-  };
+  }, [currency.code]);
 
   // Update the fetchTransactionsForExport function
   const fetchTransactionsForExport = async () => {
@@ -566,6 +532,7 @@ const Reports = () => {
     }
   };
 
+  // Update CSV formatting
   const formatTransactionsToCSV = (transactions) => {
     const headers = [
       'Date',
@@ -586,8 +553,8 @@ const Reports = () => {
       t.accountName,
       t.categoryName,
       `"${t.description || ''}"`,
-      t.amount,
-      t.runningBalance,
+      formatCurrency(t.amount), // Format amount with proper currency
+      formatCurrency(t.runningBalance), // Format balance with proper currency
       t.paymentMethod || '',
       `"${t.location || ''}"`,
       `"${t.notes || ''}"`
@@ -645,6 +612,7 @@ const Reports = () => {
     }
   };
 
+  // Update PDF generation
   const generatePDF = async (transactions) => {
     try {
       if (!Array.isArray(transactions)) {
@@ -718,6 +686,7 @@ const Reports = () => {
     }
   };
 
+  // Update the renderExpensesChart function
   const renderExpensesChart = () => {
     if (loading) {
       return (
@@ -739,7 +708,7 @@ const Reports = () => {
                     Total Expenses
                   </Typography>
                   <Typography variant="h4" sx={{ mb: 2 }}>
-                    ${(reportData.summary?.totalExpenses || 0).toLocaleString()}
+                    {formatCurrency(reportData.summary?.totalExpenses || 0)}
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <ArrowUpward color="error" fontSize="small" />
@@ -758,7 +727,7 @@ const Reports = () => {
                     Total Income
                   </Typography>
                   <Typography variant="h4" sx={{ mb: 2 }}>
-                    ${reportData.summary.totalIncome.toLocaleString()}
+                    {formatCurrency(reportData.summary.totalIncome)}
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <ArrowUpward color="success" fontSize="small" />
@@ -777,7 +746,7 @@ const Reports = () => {
                     Net Income
                   </Typography>
                   <Typography variant="h4" sx={{ mb: 2 }}>
-                    ${reportData.summary.netIncome.toLocaleString()}
+                    {formatCurrency(reportData.summary.netIncome)}
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <ArrowDownward color="error" fontSize="small" />
@@ -832,9 +801,9 @@ const Reports = () => {
                     <YAxis
                       stroke={theme.palette.text.secondary}
                       style={{ fontSize: '12px' }}
-                      tickFormatter={(value) => `$${value.toLocaleString()}`}
+                      tickFormatter={(value) => formatCurrency(value)}
                     />
-                    <RechartsTooltip content={<CustomTooltip />} />
+                    <RechartsTooltip content={(props) => <CustomTooltip {...props} formatCurrency={formatCurrency} />} />
                     <Area
                       type="monotone"
                       dataKey="expense"
@@ -876,7 +845,7 @@ const Reports = () => {
                         />
                       ))}
                     </Pie>
-                    <RechartsTooltip content={<CustomTooltip />} />
+                    <RechartsTooltip content={<CustomTooltip formatCurrency={formatCurrency} />} />
                   </PieChart>
                 </ResponsiveContainer>
                 <Box sx={{ mt: 2 }}>
@@ -904,7 +873,7 @@ const Reports = () => {
                         </Typography>
                       </Box>
                       <Typography variant="body2" fontWeight="medium">
-                        ${category.value.toLocaleString()}
+                        {formatCurrency(category.value)}
                       </Typography>
                     </Box>
                   ))}
@@ -917,6 +886,7 @@ const Reports = () => {
     );
   };
 
+  // Update the renderIncomeChart function
   const renderIncomeChart = () => {
     if (loading) {
       return (
@@ -938,7 +908,7 @@ const Reports = () => {
                     Total Income
                   </Typography>
                   <Typography variant="h4" sx={{ mb: 2 }}>
-                    ${(reportData.summary?.totalIncome || 0).toLocaleString()}
+                    {formatCurrency(reportData.summary?.totalIncome || 0)}
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <ArrowUpward color="success" fontSize="small" />
@@ -957,7 +927,7 @@ const Reports = () => {
                     Average Income
                   </Typography>
                   <Typography variant="h4" sx={{ mb: 2 }}>
-                    ${((reportData.summary?.totalIncome || 0) / 12).toLocaleString()}
+                    {formatCurrency((reportData.summary?.totalIncome || 0) / 12)}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Per month
@@ -1025,9 +995,9 @@ const Reports = () => {
                     <YAxis
                       stroke={theme.palette.text.secondary}
                       style={{ fontSize: '12px' }}
-                      tickFormatter={(value) => `$${value.toLocaleString()}`}
+                      tickFormatter={(value) => formatCurrency(value)}
                     />
-                    <RechartsTooltip content={<CustomTooltip />} />
+                    <RechartsTooltip content={(props) => <CustomTooltip {...props} formatCurrency={formatCurrency} />} />
                     <Area
                       type="monotone"
                       dataKey="income"
@@ -1069,7 +1039,7 @@ const Reports = () => {
                         />
                       ))}
                     </Pie>
-                    <RechartsTooltip content={<CustomTooltip />} />
+                    <RechartsTooltip content={<CustomTooltip formatCurrency={formatCurrency} />} />
                   </PieChart>
                 </ResponsiveContainer>
                 <Box sx={{ mt: 2 }}>
@@ -1097,7 +1067,7 @@ const Reports = () => {
                         </Typography>
                       </Box>
                       <Typography variant="body2" fontWeight="medium">
-                        ${category.value.toLocaleString()}
+                        {formatCurrency(category.value)}
                       </Typography>
                     </Box>
                   ))}
@@ -1131,7 +1101,7 @@ const Reports = () => {
                     Net Cash Flow
                   </Typography>
                   <Typography variant="h4" sx={{ mb: 2 }}>
-                    ${(reportData.summary?.netIncome || 0).toLocaleString()}
+                    {formatCurrency(reportData.summary?.netIncome || 0)}
                   </Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     {reportData.summary?.netIncome > 0 ? (
@@ -1181,7 +1151,7 @@ const Reports = () => {
                     <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
                     <XAxis dataKey="date" stroke={theme.palette.text.secondary} />
                     <YAxis stroke={theme.palette.text.secondary} />
-                    <RechartsTooltip content={<CustomTooltip />} />
+                    <RechartsTooltip content={(props) => <CustomTooltip {...props} formatCurrency={formatCurrency} />} />
                     <Area
                       type="monotone"
                       dataKey="income"
@@ -1631,19 +1601,6 @@ const Reports = () => {
     }
   };
 
-  const cardHoverStyles = {
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    '&:hover': {
-      transform: 'translateY(-4px)',
-      boxShadow: theme.shadows[8],
-      bgcolor: 'background.subtle',
-      cursor: 'pointer'
-    },
-    '&:active': {
-      cursor: 'pointer'
-    }
-  };
 
   const selectStyles = {
     '& .MuiSelect-select': {
@@ -1682,13 +1639,9 @@ const Reports = () => {
     }
   };
 
-  const datePickerStyles = {
-    '& .MuiInputBase-root': {
-      '&:hover': {
-        cursor: 'pointer'
-      }
-    }
-  };
+
+
+
 
   if (loading) {
     return (
@@ -1700,6 +1653,12 @@ const Reports = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+      
       <Box sx={{ mb: 3 }}>
         <Typography variant="h4" gutterBottom>
           Financial Reports
@@ -1764,4 +1723,6 @@ const Reports = () => {
   );
 };
 
-export default Reports; 
+
+
+export default Reports;
