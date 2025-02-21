@@ -32,6 +32,53 @@ import {
 } from '@mui/icons-material';
 import DatabaseService from '../../services/DatabaseService';
 
+// Add this constant at the top of your file after imports
+const ACCOUNT_ICONS = [
+  { icon: '💰', label: 'Money Bag' },
+  { icon: '💵', label: 'Dollar Note' },
+  { icon: '🏦', label: 'Bank' },
+  { icon: '💳', label: 'Credit Card' },
+  { icon: '🏧', label: 'ATM' },
+  { icon: '💴', label: 'Yen Note' },
+  { icon: '💶', label: 'Euro Note' },
+  { icon: '💷', label: 'Pound Note' },
+  { icon: '🪙', label: 'Coin' },
+  { icon: '📈', label: 'Investment' },
+  { icon: '🏠', label: 'Home' },
+  { icon: '🚗', label: 'Car' },
+  { icon: '✈️', label: 'Travel' },
+  { icon: '🎯', label: 'Goal' },
+  { icon: '🎓', label: 'Education' }
+];
+
+// Replace the icon TextField with this IconSelector component
+const IconSelector = ({ value, onChange }) => (
+  <FormControl fullWidth margin="dense">
+    <InputLabel>Icon</InputLabel>
+    <Select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      renderValue={(selected) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <span style={{ fontSize: '1.5rem' }}>{selected}</span>
+          <Typography variant="body2">
+            {ACCOUNT_ICONS.find(item => item.icon === selected)?.label || 'Custom Icon'}
+          </Typography>
+        </Box>
+      )}
+    >
+      {ACCOUNT_ICONS.map((item) => (
+        <MenuItem key={item.icon} value={item.icon}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <span style={{ fontSize: '1.5rem' }}>{item.icon}</span>
+            <Typography>{item.label}</Typography>
+          </Box>
+        </MenuItem>
+      ))}
+    </Select>
+  </FormControl>
+);
+
 const Accounts = () => {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -91,27 +138,39 @@ const Accounts = () => {
     }
   };
 
+  // Update the handleDelete function
   const handleDelete = async (account) => {
     try {
-      const bankId = 1; // TODO: Get from context
+      const bankId = 1;
       const year = new Date().getFullYear();
       
-      // Check if account has transactions
+      // First check if it's a default account
+      if (account.isDefault) {
+        setError(`Cannot delete "${account.name}" because it's a default account that is required for the system to work properly.`);
+        return;
+      }
+      
+      // Then check for transactions
       const transactions = await DatabaseService.getTransactionsByAccount(bankId, year, account.accountId);
       
       if (transactions && transactions.length > 0) {
-        setError(`Cannot delete account "${account.name}" because it has ${transactions.length} transactions. Please delete or move the transactions first.`);
+        setError(
+          `Cannot delete account "${account.name}" because it has ${transactions.length} ` +
+          `transaction${transactions.length === 1 ? '' : 's'}. ` +
+          'Please move or delete the transactions first.'
+        );
         return;
       }
 
       setAccountToDelete(account);
       setConfirmDialog(true);
     } catch (error) {
-      console.error('Error checking account transactions:', error);
-      setError('Failed to check account transactions');
+      console.error('Error checking account:', error);
+      setError('Failed to process account deletion request. Please try again.');
     }
   };
 
+  // Update the handleConfirmDelete function
   const handleConfirmDelete = async () => {
     try {
       const bankId = 1;
@@ -121,10 +180,17 @@ const Accounts = () => {
       await loadAccounts();
       setConfirmDialog(false);
       setAccountToDelete(null);
-      setError(null); // Clear any existing errors
+      setError(null);
     } catch (error) {
       console.error('Error deleting account:', error);
-      setError(error.message || 'Failed to delete account');
+      if (error.message.includes('default account')) {
+        setError(
+          `Cannot delete "${accountToDelete.name}" as it's a protected default account. ` +
+          'Default accounts are required for the system to work properly.'
+        );
+      } else {
+        setError('Failed to delete account. Please try again.');
+      }
     }
   };
 
@@ -177,6 +243,11 @@ const Accounts = () => {
       style: 'currency',
       currency: currency
     }).format(amount);
+  };
+
+  // Add a helper function to determine if delete button should be disabled
+  const isDeleteDisabled = (account) => {
+    return account.isDefault;
   };
 
   return (
@@ -242,6 +313,8 @@ const Accounts = () => {
                     <IconButton
                       color="error"
                       onClick={() => handleDelete(account)}
+                      disabled={isDeleteDisabled(account)}
+                      title={account.isDefault ? 'Default accounts cannot be deleted' : 'Delete account'}
                     >
                       <DeleteIcon />
                     </IconButton>
@@ -313,13 +386,9 @@ const Accounts = () => {
               value={formData.colorCode}
               onChange={(e) => setFormData({ ...formData, colorCode: e.target.value })}
             />
-            <TextField
-              margin="dense"
-              label="Icon"
-              fullWidth
+            <IconSelector
               value={formData.icon}
-              onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
-              helperText="You can use an emoji or text"
+              onChange={(newIcon) => setFormData({ ...formData, icon: newIcon })}
             />
             <TextField
               margin="dense"
@@ -344,8 +413,14 @@ const Accounts = () => {
         open={Boolean(error)} 
         autoHideDuration={6000} 
         onClose={() => setError(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
       >
-        <Alert onClose={() => setError(null)} severity="error">
+        <Alert 
+          onClose={() => setError(null)} 
+          severity="error"
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
           {error}
         </Alert>
       </Snackbar>

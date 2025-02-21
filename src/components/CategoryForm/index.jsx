@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -10,131 +10,88 @@ import {
   FormControl,
   InputLabel,
   Select,
-  MenuItem,
-  Box
+  MenuItem
 } from '@mui/material';
-import { ChromePicker } from 'react-color';
+import IconSelector from '../IconSelector';
 
 const CategoryForm = ({ open, onClose, onSubmit, initialData }) => {
   const [formData, setFormData] = useState({
     name: '',
     type: 'expense',
+    icon: '📁',
     colorCode: '#000000',
-    icon: '📁'
   });
 
-  const [showColorPicker, setShowColorPicker] = useState(false);
-
   useEffect(() => {
-    // Reset form when opening
-    if (open) {
-      setFormData(initialData ? {
-        name: initialData.name || '',
-        type: initialData.type || 'expense',
+    if (initialData) {
+      setFormData({
+        name: initialData.name,
+        type: initialData.type,
+        icon: initialData.icon,
         colorCode: initialData.colorCode || initialData.color || '#000000',
-        icon: initialData.icon || '📁'
-      } : {
-        name: '',
-        type: 'expense',
-        colorCode: '#000000',
-        icon: '📁'
       });
     }
-  }, [open, initialData]);
+  }, [initialData]);
 
-  const handleChange = (field) => (event) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: event.target.value
-    }));
-  };
-
-  const handleColorChange = (color) => {
-    setFormData(prev => ({
-      ...prev,
-      colorCode: color.hex
-    }));
-  };
-
-  const handleSubmit = () => {
+  const handleSubmit = (e) => {
+    e.preventDefault();
     onSubmit(formData);
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose}>
       <DialogTitle>
         {initialData ? 'Edit Category' : 'New Category'}
       </DialogTitle>
-      <DialogContent>
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+      <form onSubmit={handleSubmit}>
+        <DialogContent>
           <TextField
+            autoFocus
+            margin="dense"
             label="Name"
-            value={formData.name}
-            onChange={handleChange('name')}
             fullWidth
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             required
           />
-
-          <FormControl fullWidth>
+          
+          <FormControl fullWidth margin="dense">
             <InputLabel>Type</InputLabel>
             <Select
               value={formData.type}
-              onChange={handleChange('type')}
-              label="Type"
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+              required
             >
               <MenuItem value="expense">Expense</MenuItem>
               <MenuItem value="income">Income</MenuItem>
             </Select>
           </FormControl>
 
-          <TextField
-            label="Icon"
+          <IconSelector
             value={formData.icon}
-            onChange={handleChange('icon')}
-            fullWidth
+            onChange={(newIcon) => setFormData({ ...formData, icon: newIcon })}
+            disabled={initialData?.isDefault}
           />
 
-          <Box>
-            <Button
-              variant="outlined"
-              onClick={() => setShowColorPicker(!showColorPicker)}
-              style={{ backgroundColor: formData.colorCode }}
-            >
-              Pick Color
-            </Button>
-            {showColorPicker && (
-              <Box sx={{ position: 'absolute', zIndex: 2 }}>
-                <Box
-                  sx={{
-                    position: 'fixed',
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                    left: 0
-                  }}
-                  onClick={() => setShowColorPicker(false)}
-                />
-                <ChromePicker
-                  color={formData.colorCode}
-                  onChange={handleColorChange}
-                />
-              </Box>
-            )}
-          </Box>
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button
-          onClick={handleSubmit}
-          variant="contained"
-          disabled={!formData.name}
-        >
-          {initialData ? 'Update' : 'Create'}
-        </Button>
-      </DialogActions>
+          <TextField
+            margin="dense"
+            label="Color"
+            type="color"
+            fullWidth
+            value={formData.colorCode}
+            onChange={(e) => setFormData({ ...formData, colorCode: e.target.value })}
+            disabled={initialData?.isDefault}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="contained" color="primary">
+            {initialData ? 'Update' : 'Create'}
+          </Button>
+        </DialogActions>
+      </form>
     </Dialog>
   );
 };
 
-export default CategoryForm; 
+export default CategoryForm;

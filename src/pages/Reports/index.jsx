@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Container,
   Grid,
@@ -55,67 +55,11 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { useApp } from '../../contexts/AppContext';
 import { useRegion } from '../../contexts/RegionContext';
-import PropTypes from 'prop-types';
-
-// First, update the CustomTooltip component to receive formatCurrency as a prop
-const CustomTooltip = ({ active, payload, label, formatCurrency }) => {
-  const theme = useTheme();
-  const { currency } = useRegion();
-
-  if (active && payload && payload.length) {
-    return (
-      <Box
-        sx={{
-          bgcolor: 'background.paper',
-          p: 2,
-          border: 1,
-          borderColor: 'divider',
-          borderRadius: 1,
-          boxShadow: theme.shadows[3]
-        }}
-      >
-        <Typography variant="subtitle2" gutterBottom>
-          {label}
-        </Typography>
-        {payload.map((entry, index) => (
-          <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-            <Box
-              sx={{
-                width: 12,
-                height: 12,
-                borderRadius: '50%',
-                bgcolor: entry.color
-              }}
-            />
-            <Typography variant="body2">
-              {entry.name}: {formatCurrency(entry.value)}
-            </Typography>
-          </Box>
-        ))}
-      </Box>
-    );
-  }
-  return null;
-};
-
-// Update PropTypes to include formatCurrency
-CustomTooltip.propTypes = {
-  active: PropTypes.bool,
-  payload: PropTypes.arrayOf(
-    PropTypes.shape({
-      name: PropTypes.string,
-      value: PropTypes.number,
-      color: PropTypes.string
-    })
-  ),
-  label: PropTypes.string,
-  formatCurrency: PropTypes.func.isRequired
-};
 
 const Reports = () => {
   const theme = useTheme();
   const { currentBank, currentYear } = useApp();
-  const { currency } = useRegion(); // Add RegionContext usage
+  const { currency } = useRegion();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [timeframe, setTimeframe] = useState('month');
@@ -169,10 +113,10 @@ const Reports = () => {
   const [availableAccounts, setAvailableAccounts] = useState([]);
   const [availableCategories, setAvailableCategories] = useState([]);
 
-  const COLORS = [
+  const COLORS = useMemo(() => [
     '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD',
     '#D4A5A5', '#9B6B6B', '#E9D985', '#556270', '#6C5B7B'
-  ];
+  ], []);
 
   // Add menuItems definition
   const reportTypes = [
@@ -366,7 +310,7 @@ const Reports = () => {
     } finally {
       setLoading(false);
     }
-  }, [currentBank, currentYear, timeframe, exportOptions, exportFilters]);
+  }, [timeframe, exportOptions, exportFilters]);
 
   // Load accounts and categories for filters
   const loadFilterData = useCallback(async () => {
@@ -403,16 +347,66 @@ const Reports = () => {
   // In the Reports component, define formatCurrency using the currency from context
   const formatCurrency = useCallback((amount) => {
     if (typeof amount !== 'number') {
-      return '0';
+      return currency.symbol + '0';
     }
-
-    return new Intl.NumberFormat(undefined, {
+  
+    const options = {
       style: 'currency',
       currency: currency.code,
       minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount);
-  }, [currency.code]);
+      maximumFractionDigits: 2
+    };
+  
+    // For Indian Rupee (INR), use Indian number format
+    if (currency.code === 'INR') {
+      options.notation = 'standard';
+      options.numberingSystem = 'latn';
+    }
+  
+    try {
+      return new Intl.NumberFormat(currency.locale || 'en-US', options).format(amount);
+    } catch (error) {
+      console.error('Currency formatting error:', error);
+      // Fallback formatting
+      return `${currency.symbol}${amount.toFixed(2)}`;
+    }
+  }, [currency]);
+
+  // Update CustomTooltip component to handle currency properly
+  const CustomTooltip = useCallback(({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      return (
+        <Box sx={{
+          bgcolor: 'background.paper',
+          p: 2,
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1,
+          boxShadow: 3
+        }}>
+          <Typography variant="subtitle2" gutterBottom>
+            {label}
+          </Typography>
+          {payload.map((entry, index) => (
+            <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+              <Box
+                sx={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: '50%',
+                  bgcolor: entry.color
+                }}
+              />
+              <Typography variant="body2">
+                {`${entry.name}: ${formatCurrency(entry.value)}`}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
+      );
+    }
+    return null;
+  }, [formatCurrency]);
 
   // Update the fetchTransactionsForExport function
   const fetchTransactionsForExport = async () => {
@@ -803,7 +797,7 @@ const Reports = () => {
                       style={{ fontSize: '12px' }}
                       tickFormatter={(value) => formatCurrency(value)}
                     />
-                    <RechartsTooltip content={(props) => <CustomTooltip {...props} formatCurrency={formatCurrency} />} />
+                    <RechartsTooltip content={CustomTooltip} />
                     <Area
                       type="monotone"
                       dataKey="expense"
@@ -845,7 +839,7 @@ const Reports = () => {
                         />
                       ))}
                     </Pie>
-                    <RechartsTooltip content={<CustomTooltip formatCurrency={formatCurrency} />} />
+                    <RechartsTooltip content={CustomTooltip} />
                   </PieChart>
                 </ResponsiveContainer>
                 <Box sx={{ mt: 2 }}>
@@ -997,7 +991,7 @@ const Reports = () => {
                       style={{ fontSize: '12px' }}
                       tickFormatter={(value) => formatCurrency(value)}
                     />
-                    <RechartsTooltip content={(props) => <CustomTooltip {...props} formatCurrency={formatCurrency} />} />
+                    <RechartsTooltip content={CustomTooltip} />
                     <Area
                       type="monotone"
                       dataKey="income"
@@ -1039,7 +1033,7 @@ const Reports = () => {
                         />
                       ))}
                     </Pie>
-                    <RechartsTooltip content={<CustomTooltip formatCurrency={formatCurrency} />} />
+                    <RechartsTooltip content={CustomTooltip} />
                   </PieChart>
                 </ResponsiveContainer>
                 <Box sx={{ mt: 2 }}>
@@ -1150,8 +1144,8 @@ const Reports = () => {
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
                     <XAxis dataKey="date" stroke={theme.palette.text.secondary} />
-                    <YAxis stroke={theme.palette.text.secondary} />
-                    <RechartsTooltip content={(props) => <CustomTooltip {...props} formatCurrency={formatCurrency} />} />
+                    <YAxis stroke={theme.palette.text.secondary} tickFormatter={(value) => formatCurrency(value)} />
+                    <RechartsTooltip content={CustomTooltip} />
                     <Area
                       type="monotone"
                       dataKey="income"

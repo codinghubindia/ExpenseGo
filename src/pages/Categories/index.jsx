@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+/* eslint-disable react/prop-types */
+import { useState, useEffect } from 'react';
 import {
   Container,
   Paper,
@@ -10,7 +11,12 @@ import {
   ListItemSecondaryAction,
   IconButton,
   Box,
-  Alert
+  Alert,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  CircularProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -19,6 +25,53 @@ import {
 } from '@mui/icons-material';
 import CategoryForm from '../../components/CategoryForm';
 import DatabaseService from '../../services/DatabaseService';
+
+const CATEGORY_ICONS = [
+  { icon: '🛒', label: 'Shopping' },
+  { icon: '🍽️', label: 'Food & Dining' },
+  { icon: '🏠', label: 'Housing' },
+  { icon: '🚗', label: 'Transportation' },
+  { icon: '💊', label: 'Healthcare' },
+  { icon: '🎮', label: 'Entertainment' },
+  { icon: '📚', label: 'Education' },
+  { icon: '💼', label: 'Business' },
+  { icon: '✈️', label: 'Travel' },
+  { icon: '🏦', label: 'Banking' },
+  { icon: '📱', label: 'Utilities' },
+  { icon: '🎁', label: 'Gifts' },
+  { icon: '💰', label: 'Income' },
+  { icon: '💳', label: 'Credit Card' },
+  { icon: '🏢', label: 'Rent' }
+];
+
+// eslint-disable-next-line no-unused-vars
+const IconSelector = ({ value, onChange, disabled }) => (
+  <FormControl fullWidth margin="dense">
+    <InputLabel>Icon</InputLabel>
+    <Select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      renderValue={(selected) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <span style={{ fontSize: '1.5rem' }}>{selected}</span>
+          <Typography variant="body2">
+            {CATEGORY_ICONS.find(item => item.icon === selected)?.label || 'Custom Icon'}
+          </Typography>
+        </Box>
+      )}
+    >
+      {CATEGORY_ICONS.map((item) => (
+        <MenuItem key={item.icon} value={item.icon}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <span style={{ fontSize: '1.5rem' }}>{item.icon}</span>
+            <Typography>{item.label}</Typography>
+          </Box>
+        </MenuItem>
+      ))}
+    </Select>
+  </FormControl>
+);
 
 const Categories = () => {
   const [categories, setCategories] = useState([]);
@@ -34,12 +87,28 @@ const Categories = () => {
       const bankId = 1; // TODO: Get from context
       const year = new Date().getFullYear();
       
-      // Clean up duplicates first
-      await DatabaseService.cleanupDuplicateCategories(bankId, year);
+      // Initialize database first
+      await DatabaseService.initializeDatabase();
       
+      // Create tables if they don't exist
+      await DatabaseService.createBankYearTables(bankId, year);
+      
+      // Ensure default categories exist
+      await DatabaseService.createDefaultCategories(bankId, year);
+      
+      // Get all categories including defaults
       const data = await DatabaseService.getCategories(bankId, year);
-      setCategories(data);
+      
+      if (!data || data.length === 0) {
+        console.warn('No categories found, creating defaults...');
+        await DatabaseService.createDefaultCategories(bankId, year);
+        const freshData = await DatabaseService.getCategories(bankId, year);
+        setCategories(freshData || []);
+      } else {
+        setCategories(data);
+      }
     } catch (error) {
+      console.error('Error loading categories:', error);
       setError('Failed to load categories: ' + error.message);
     } finally {
       setLoading(false);
@@ -122,58 +191,71 @@ const Categories = () => {
       )}
 
       <Paper>
-        <List>
-          {categories.map((category) => (
-            <ListItem
-              key={category.categoryId}
-              sx={{
-                borderLeft: `4px solid ${category.colorCode || category.color || '#000000'}`,
-                opacity: category.isDefault ? 0.7 : 1
-              }}
-            >
-              <ListItemText
-                primary={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <span>{category.icon}</span>
-                    <Typography>
-                      {category.name}
-                      {category.isDefault && (
-                        <Typography
-                          component="span"
-                          variant="caption"
-                          sx={{ ml: 1, color: 'text.secondary' }}
-                        >
-                          (Default)
-                        </Typography>
-                      )}
-                    </Typography>
-                  </Box>
-                }
-                secondary={category.type}
-              />
-              <ListItemSecondaryAction>
-                <IconButton
-                  edge="end"
-                  onClick={() => {
-                    setSelectedCategory(category);
-                    setIsFormOpen(true);
-                  }}
-                  disabled={category.isDefault}
-                >
-                  <EditIcon />
-                </IconButton>
-                <IconButton
-                  edge="end"
-                  onClick={() => handleDeleteCategory(category.categoryId)}
-                  disabled={category.isDefault}
-                  sx={{ ml: 1 }}
-                >
-                  <DeleteIcon />
-                </IconButton>
-              </ListItemSecondaryAction>
-            </ListItem>
-          ))}
-        </List>
+        {loading ? (
+          <Box sx={{ p: 4, textAlign: 'center' }}>
+            <CircularProgress />
+            <Typography sx={{ mt: 2 }}>Loading categories...</Typography>
+          </Box>
+        ) : categories.length === 0 ? (
+          <Box sx={{ p: 4, textAlign: 'center' }}>
+            <Typography color="text.secondary">
+              No categories found. Click "Add Category" to create one.
+            </Typography>
+          </Box>
+        ) : (
+          <List>
+            {categories.map((category) => (
+              <ListItem
+                key={category.categoryId}
+                sx={{
+                  borderLeft: `4px solid ${category.colorCode || category.color || '#000000'}`,
+                  opacity: category.isDefault ? 0.7 : 1
+                }}
+              >
+                <ListItemText
+                  primary={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <span>{category.icon}</span>
+                      <Typography>
+                        {category.name}
+                        {category.isDefault && (
+                          <Typography
+                            component="span"
+                            variant="caption"
+                            sx={{ ml: 1, color: 'text.secondary' }}
+                          >
+                            (Default)
+                          </Typography>
+                        )}
+                      </Typography>
+                    </Box>
+                  }
+                  secondary={category.type}
+                />
+                <ListItemSecondaryAction>
+                  <IconButton
+                    edge="end"
+                    onClick={() => {
+                      setSelectedCategory(category);
+                      setIsFormOpen(true);
+                    }}
+                    disabled={category.isDefault}
+                  >
+                    <EditIcon />
+                  </IconButton>
+                  <IconButton
+                    edge="end"
+                    onClick={() => handleDeleteCategory(category.categoryId)}
+                    disabled={category.isDefault}
+                    sx={{ ml: 1 }}
+                  >
+                    <DeleteIcon />
+                  </IconButton>
+                </ListItemSecondaryAction>
+              </ListItem>
+            ))}
+          </List>
+        )}
       </Paper>
 
       <CategoryForm
@@ -189,4 +271,4 @@ const Categories = () => {
   );
 };
 
-export default Categories; 
+export default Categories;

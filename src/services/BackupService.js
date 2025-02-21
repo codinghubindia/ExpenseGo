@@ -76,32 +76,39 @@ class BackupService {
     try {
       const backup = await this.readBackupFile(file);
       
-      // Validate backup
       if (!this.validateBackup(backup)) {
         throw new Error('Invalid backup file');
       }
 
-      // Start restore process
       await DatabaseService.initializeDatabase();
       
-      // Restore schema if needed
-      if (backup.data.schema) {
-        await DatabaseService.restoreSchema(backup.data.schema);
-      }
-
-      const bankId = 1; // TODO: Get from context
+      const bankId = 1;
       const year = new Date().getFullYear();
 
-      // Create necessary tables
       await DatabaseService.createBankYearTables(bankId, year);
 
-      // Restore data in order (to maintain referential integrity)
+      // Restore accounts with duplicate checking
       if (backup.data.accounts && Array.isArray(backup.data.accounts)) {
         for (const account of backup.data.accounts) {
-          await DatabaseService.addAccount(bankId, year, account);
+          // Check if account already exists
+          const exists = await DatabaseService.db.exec(`
+            SELECT account_id FROM accounts_${bankId}_${year}
+            WHERE name = ?
+          `, [account.name]);
+
+          if (!exists[0]?.values?.length) {
+            await DatabaseService.addAccount(bankId, year, {
+              ...account,
+              is_default: account.isDefault || 0
+            });
+          }
         }
       }
 
+      // Ensure default accounts exist
+      await DatabaseService.createDefaultAccounts(bankId, year);
+
+      // Rest of restoration process
       if (backup.data.categories && Array.isArray(backup.data.categories)) {
         for (const category of backup.data.categories) {
           await DatabaseService.addCategory(bankId, year, category);

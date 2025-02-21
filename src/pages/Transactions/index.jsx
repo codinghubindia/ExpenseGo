@@ -35,6 +35,7 @@ import dayjs from 'dayjs';
 import { useApp } from '../../contexts/AppContext';
 import DatabaseService from '../../services/DatabaseService';
 import { useRegion } from '../../contexts/RegionContext';
+import ReportExport from '../../services/ReportExport';
 
 const Transactions = () => {
   const theme = useTheme();
@@ -66,6 +67,7 @@ const Transactions = () => {
     categoryId: 'all'
   });
   const [openDialog, setOpenDialog] = useState(false);
+  const [exportFormat, setExportFormat] = useState('');
 
   useEffect(() => {
     loadData();
@@ -238,6 +240,22 @@ const Transactions = () => {
     </Typography>
   );
 
+  const handleExport = async () => {
+    try {
+      await ReportExport.exportTransactions(
+        filteredTransactions,
+        accounts,
+        categories,
+        exportFormat,
+        currency
+      );
+      setExportFormat('');
+    } catch (error) {
+      console.error('Export failed:', error);
+      setError('Failed to export transactions: ' + error.message);
+    }
+  };
+
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
       <Box>
@@ -246,13 +264,34 @@ const Transactions = () => {
           <Typography variant="h4" fontWeight="bold">
             Transactions
           </Typography>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setOpenDialog(true)}
-          >
-            Add Transaction
-          </Button>
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <Select
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value)}
+                displayEmpty
+              >
+                <MenuItem value="" disabled>Export As</MenuItem>
+                <MenuItem value={ReportExport.FORMATS.PDF}>PDF</MenuItem>
+                <MenuItem value={ReportExport.FORMATS.EXCEL}>Excel</MenuItem>
+                <MenuItem value={ReportExport.FORMATS.CSV}>CSV</MenuItem>
+              </Select>
+            </FormControl>
+            <Button
+              variant="outlined"
+              onClick={handleExport}
+              disabled={!exportFormat || loading}
+            >
+              Export
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setOpenDialog(true)}
+            >
+              Add Transaction
+            </Button>
+          </Box>
         </Box>
 
         {error && (

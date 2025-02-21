@@ -10,6 +10,21 @@ class DatabaseService {
   static IDB_STORE_NAME = 'sqliteDB';
   static idb = null;
 
+  // Add DEFAULT_ACCOUNTS constant
+  static DEFAULT_ACCOUNTS = [
+    {
+      name: 'Petty Cash',
+      type: 'cash',
+      currency: 'INR',
+      initialBalance: 0,
+      currentBalance: 0,
+      colorCode: '#FFD700',
+      icon: '💵',
+      notes: 'Default cash account for small expenses',
+      isDefault: true
+    }
+  ];
+
   static handleError(error, context) {
     // In production, you might want to log to a service like Sentry
     if (process.env.NODE_ENV !== 'production') {
@@ -121,27 +136,69 @@ class DatabaseService {
   }
 
   static async initializeDefaultData() {
-    const currentYear = new Date().getFullYear();
-    
-    // Insert default financial year
-    await this.db.exec(`
-      INSERT INTO financial_years (start_date, end_date)
-      VALUES ('${currentYear}-01-01', '${currentYear}-12-31');
-    `);
+    try {
+      const currentYear = new Date().getFullYear();
+      
+      // Insert default financial year
+      await this.db.exec(`
+        INSERT INTO financial_years (start_date, end_date)
+        VALUES ('${currentYear}-01-01', '${currentYear}-12-31');
+      `);
 
-    // Insert default bank
-    await this.db.exec(`
-      INSERT INTO banks (name, icon)
-      VALUES ('Default Bank', '🏦');
-    `);
+      // Insert default bank
+      await this.db.exec(`
+        INSERT INTO banks (name, icon)
+        VALUES ('Default Bank', '🏦');
+      `);
 
-    // Create bank-specific tables for the current year
-    await this.createBankYearTables(1, currentYear);
+      // Create bank-specific tables for the current year
+      await this.createBankYearTables(1, currentYear);
+
+      // Check if Petty Cash account exists
+      const existingAccounts = await this.db.exec(`
+        SELECT account_id FROM accounts_1_${currentYear}
+        WHERE name = 'Petty Cash'
+      `);
+
+      // Create Petty Cash account if it doesn't exist
+      if (!existingAccounts[0]?.values?.length) {
+        await this.db.exec(`
+          INSERT INTO accounts_1_${currentYear} (
+            name,
+            type,
+            initial_balance,
+            current_balance,
+            currency,
+            color_code,
+            icon,
+            notes,
+            created_at,
+            updated_at
+          ) VALUES (
+            'Petty Cash',
+            'cash',
+            0,
+            0,
+            'INR',
+            '#FFD700',
+            '💵',
+            'Default cash account for small expenses',
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+          )
+        `);
+      }
+
+      await this.saveToIndexedDB();
+    } catch (error) {
+      this.handleError(error, 'Error initializing default data');
+    }
   }
 
+  // Modify createBankYearTables to include is_default column
   static async createBankYearTables(bankId, year) {
     try {
-      // Create accounts table
+      // Modify accounts table creation
       await this.db.exec(`
         CREATE TABLE IF NOT EXISTS accounts_${bankId}_${year} (
           account_id INTEGER PRIMARY KEY,
@@ -153,6 +210,7 @@ class DatabaseService {
           color_code TEXT,
           icon TEXT,
           notes TEXT,
+          is_default INTEGER DEFAULT 0,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP,
           updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
@@ -196,6 +254,9 @@ class DatabaseService {
           FOREIGN KEY (category_id) REFERENCES categories_${bankId}_${year}(category_id)
         )
       `);
+
+      // Create default accounts after table creation
+      await this.createDefaultAccounts(bankId, year);
 
       await this.saveToIndexedDB();
       return true;
@@ -423,10 +484,21 @@ class DatabaseService {
     }
   }
 
+  // Modify deleteAccount to prevent default account deletion
   static async deleteAccount(bankId, year, accountId) {
     try {
       await this.initializeDatabase();
       
+      // Check if account is default
+      const isDefault = await this.db.exec(`
+        SELECT is_default FROM accounts_${bankId}_${year}
+        WHERE account_id = ?
+      `, [accountId]);
+
+      if (isDefault[0]?.values?.[0]?.[0] === 1) {
+        throw new Error('Cannot delete default account');
+      }
+
       // First check if account has any transactions
       const transactions = await this.getTransactionsByAccount(bankId, year, accountId);
       if (transactions && transactions.length > 0) {
@@ -1327,6 +1399,48 @@ class DatabaseService {
     } catch (error) {
       this.handleError(error, 'Error getting transactions by account');
       return [];
+    }
+  }
+
+  static async createDefaultAccounts(bankId, year) {
+    try {
+      for (const defaultAccount of this.DEFAULT_ACCOUNTS) {
+        // Check if default account exists
+        const exists = await this.db.exec(`
+          SELECT account_id FROM accounts_${bankId}_${year}
+          WHERE name = ? AND is_default = 1
+        `, [defaultAccount.name]);
+
+        if (!exists[0]?.values?.length) {
+          await this.db.exec(`
+            INSERT INTO accounts_${bankId}_${year} (
+              name,
+              type,
+              currency,
+              initial_balance,
+              current_balance,
+              color_code,
+              icon,
+              notes,
+              is_default,
+              created_at,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          `, [
+            defaultAccount.name,
+            defaultAccount.type,
+            defaultAccount.currency,
+            defaultAccount.initialBalance,
+            defaultAccount.currentBalance,
+            defaultAccount.colorCode,
+            defaultAccount.icon,
+            defaultAccount.notes
+          ]);
+        }
+      }
+      await this.saveToIndexedDB();
+    } catch (error) {
+      this.handleError(error, 'Error creating default accounts');
     }
   }
 }
