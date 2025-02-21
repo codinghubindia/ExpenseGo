@@ -16,8 +16,8 @@ export default defineConfig({
         theme_color: '#2563EB',
         background_color: '#F1F5F9',
         display: 'standalone',
-        scope: './',
-        start_url: './',
+        scope: '/ExpenseGo/',
+        start_url: '/ExpenseGo/',
         icons: [
           // ... your icons configuration
         ]

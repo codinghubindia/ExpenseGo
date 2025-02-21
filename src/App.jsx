@@ -1,6 +1,5 @@
 import React from 'react';
 import { Box, CssBaseline, ThemeProvider, useMediaQuery } from '@mui/material';
-import { HashRouter } from 'react-router-dom';
 import { AppProvider, useApp } from './contexts/AppContext';
 import { createAppTheme } from './styles/theme';
 import AppRoutes from './routes';
@@ -29,17 +28,15 @@ const ThemedApp = ({ systemTheme }) => {
   return (
     <ThemeProvider theme={muiTheme}>
       <CssBaseline />
-      <HashRouter>
-        <Box
-          sx={{
-            minHeight: '100vh',
-            bgcolor: 'background.default',
-            color: 'text.primary'
-          }}
-        >
-          <AppRoutes />
-        </Box>
-      </HashRouter>
+      <Box
+        sx={{
+          minHeight: '100vh',
+          bgcolor: 'background.default',
+          color: 'text.primary'
+        }}
+      >
+        <AppRoutes />
+      </Box>
     </ThemeProvider>
   );
 };
