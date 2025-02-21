@@ -22,10 +22,10 @@ import {
 } from '@mui/material';
 import { useRegion } from '../../contexts/RegionContext';
 import { regionSettings } from '../../contexts/RegionContext';
+import BackupRestore from '../../components/BackupRestore';
 
 function Settings() {
   const { region, updateRegion } = useRegion();
-  const [darkMode, setDarkMode] = useState(false);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
   const [error, setError] = useState(null);
@@ -64,6 +64,7 @@ function Settings() {
       setError('Failed to set PIN');
     }
   };
+
 
   // Update the error check to handle initialization
   if (!region || !regionSettings[region]) {
@@ -114,24 +115,6 @@ function Settings() {
             </ListItemSecondaryAction>
           </ListItem>
 
-          {/* Existing Settings Items */}
-          <ListItem>
-            <ListItemText primary="Dark Mode" secondary="Enable dark color theme" />
-            <ListItemSecondaryAction>
-              <Switch
-                edge="end"
-                checked={darkMode}
-                onChange={(e) => setDarkMode(e.target.checked)}
-              />
-            </ListItemSecondaryAction>
-          </ListItem>
-
-          <ListItem button onClick={() => setBackupDialogOpen(true)}>
-            <ListItemText 
-              primary="Backup Data" 
-              secondary="Create a backup of your financial data" 
-            />
-          </ListItem>
 
           <ListItem button onClick={() => setPinDialogOpen(true)}>
             <ListItemText 
@@ -139,25 +122,11 @@ function Settings() {
               secondary="Set up PIN protection" 
             />
           </ListItem>
+          <ListItem button onClick={() => setBackupDialogOpen(true)}>
+            <BackupRestore />
+          </ListItem>
         </List>
       </Paper>
-
-      {/* Backup Dialog */}
-      <Dialog open={backupDialogOpen} onClose={() => setBackupDialogOpen(false)}>
-        <DialogTitle>Backup Data</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Create a backup of all your financial data. The backup will be downloaded
-            as a file that you can use to restore your data later.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setBackupDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleBackup} variant="contained">
-            Create Backup
-          </Button>
-        </DialogActions>
-      </Dialog>
 
       {/* PIN Dialog */}
       <Dialog open={pinDialogOpen} onClose={() => setPinDialogOpen(false)}>
