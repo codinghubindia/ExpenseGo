@@ -1,0 +1,17 @@
+{
+  "name": "ExpenseGo",
+  "short_name": "ExpenseGo",
+  "description": "A Progressive Web App for managing personal finances",
+  "start_url": "/ExpenseGo/",
+  "display": "standalone",
+  "background_color": "#F1F5F9",
+  "theme_color": "#2563EB",
+  "icons": [
+    {
+      "src": "revenue-growth.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+} 
