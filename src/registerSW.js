@@ -4,12 +4,10 @@ export const registerSW = () => {
     window.addEventListener('load', () => {
       // Add offline/online handlers
       window.addEventListener('online', () => {
-        console.log('Application is online');
         document.dispatchEvent(new CustomEvent('app-online'));
       });
 
       window.addEventListener('offline', () => {
-        console.log('Application is offline');
         document.dispatchEvent(new CustomEvent('app-offline'));
       });
     });

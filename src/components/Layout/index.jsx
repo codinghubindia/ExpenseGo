@@ -27,10 +27,12 @@ import {
   Payment,
   DarkMode,
   LightMode,
-  Computer
+  Computer,
+  Backup as BackupIcon
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../../contexts/AppContext';
+import BackupRestore from '../BackupRestore';
 
 const drawerWidth = 280;
 
@@ -72,7 +74,7 @@ const Layout = ({ children }) => {
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Toolbar>
         <Typography variant="h6" noWrap component="div">
-          Financial PWA
+          ExpenseGo
         </Typography>
       </Toolbar>
       <Divider />
@@ -109,6 +111,10 @@ const Layout = ({ children }) => {
           </ListItem>
         ))}
       </List>
+      <Divider />
+      <Box sx={{ p: 2 }}>
+        <BackupRestore />
+      </Box>
     </Box>
   );
 

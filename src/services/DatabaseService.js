@@ -9,6 +9,15 @@ class DatabaseService {
   static IDB_STORE_NAME = 'sqliteDB';
   static idb = null;
 
+  static handleError(error, context) {
+    // In production, you might want to log to a service like Sentry
+    if (process.env.NODE_ENV !== 'production') {
+      // eslint-disable-next-line no-console
+      console.error(`${context}:`, error);
+    }
+    throw error;
+  }
+
   static async initializeDatabase() {
     try {
       if (this.db) {
@@ -32,15 +41,14 @@ class DatabaseService {
       if (existingDB) {
         this.db = new SQL.Database(existingDB);
       } else {
-      this.db = new SQL.Database();
-      await this.createInitialSchema();
-      await this.initializeDefaultData();
+        this.db = new SQL.Database();
+        await this.createInitialSchema();
+        await this.initializeDefaultData();
       }
 
       await this.saveToIndexedDB();
     } catch (error) {
-      console.error('Database initialization failed:', error);
-      throw error;
+      this.handleError(error, 'Database initialization failed');
     }
   }
 
@@ -49,8 +57,7 @@ class DatabaseService {
       await this.createBankYearTables(bankId, year);
       await this.createDefaultCategories(bankId, year);
     } catch (error) {
-      console.error('Error ensuring year tables:', error);
-      throw error;
+      this.handleError(error, 'Error ensuring year tables');
     }
   }
 
@@ -65,7 +72,7 @@ class DatabaseService {
       await tx.done;
       return data;
     } catch (error) {
-      console.error('Error loading from IndexedDB:', error);
+      this.handleError(error, 'Error loading from IndexedDB');
       return null;
     }
   }
@@ -81,8 +88,7 @@ class DatabaseService {
       await store.put(data, 'database');
       await tx.done;
     } catch (error) {
-      console.error('Error saving to IndexedDB:', error);
-      throw error;
+      this.handleError(error, 'Error saving to IndexedDB');
     }
   }
 
@@ -193,8 +199,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return true;
     } catch (error) {
-      console.error('Error creating tables:', error);
-      throw error;
+      this.handleError(error, 'Error creating tables');
     }
   }
 
@@ -249,8 +254,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return true;
     } catch (error) {
-      console.error('Error creating default categories:', error);
-      throw error;
+      this.handleError(error, 'Error creating default categories');
     }
   }
 
@@ -283,8 +287,7 @@ class DatabaseService {
         ON categories_${bankId}_${year} (type);
       `);
     } catch (error) {
-      console.error('Error creating indexes:', error);
-      throw error;
+      this.handleError(error, 'Error creating indexes');
     }
   }
 
@@ -329,8 +332,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return result.lastInsertRowid;
     } catch (error) {
-      console.error('Error creating account:', error);
-      throw error;
+      this.handleError(error, 'Error creating account');
     }
   }
 
@@ -372,8 +374,7 @@ class DatabaseService {
         updatedAt: row[10]
       })) || [];
     } catch (error) {
-      console.error('Error getting accounts:', error);
-      throw error;
+      this.handleError(error, 'Error getting accounts');
     }
   }
 
@@ -417,8 +418,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return true;
     } catch (error) {
-      console.error('Error updating account:', error);
-      throw error;
+      this.handleError(error, 'Error updating account');
     }
   }
 
@@ -437,8 +437,7 @@ class DatabaseService {
 
       await this.saveToIndexedDB();
     } catch (error) {
-      console.error('Error deleting account:', error);
-      throw error;
+      this.handleError(error, 'Error deleting account');
     }
   }
 
@@ -493,8 +492,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return transactionData.transaction_id;
     } catch (error) {
-      console.error('Error creating transaction:', error);
-      throw error;
+      this.handleError(error, 'Error creating transaction');
     }
   }
 
@@ -581,8 +579,7 @@ class DatabaseService {
         toAccountName: row[17]
       })) || [];
     } catch (error) {
-      console.error('Error getting transactions:', error);
-      throw error;
+      this.handleError(error, 'Error getting transactions');
     }
   }
 
@@ -626,8 +623,7 @@ class DatabaseService {
         throw error;
       }
     } catch (error) {
-      console.error('Error deleting transaction:', error);
-      throw error;
+      this.handleError(error, 'Error deleting transaction');
     }
   }
 
@@ -723,8 +719,7 @@ class DatabaseService {
         throw error;
       }
     } catch (error) {
-      console.error('Error updating transaction:', error);
-      throw error;
+      this.handleError(error, 'Error updating transaction');
     }
   }
 
@@ -796,8 +791,7 @@ class DatabaseService {
         WHERE account_id = ?
       `, [amount, dayjs().format('YYYY-MM-DD HH:mm:ss'), accountId]);
     } catch (error) {
-      console.error('Error updating account balance:', error);
-      throw error;
+      this.handleError(error, 'Error updating account balance');
     }
   }
 
@@ -811,8 +805,7 @@ class DatabaseService {
       `);
       return result[0]?.values?.map(this.mapBankRow) || [];
     } catch (error) {
-      console.error('Error getting banks:', error);
-      throw error;
+      this.handleError(error, 'Error getting banks');
     }
   }
 
@@ -833,8 +826,7 @@ class DatabaseService {
       
       return bankId;
     } catch (error) {
-      console.error('Error creating bank:', error);
-      throw error;
+      this.handleError(error, 'Error creating bank');
     }
   }
 
@@ -850,8 +842,7 @@ class DatabaseService {
       
       await this.saveToIndexedDB();
     } catch (error) {
-      console.error('Error updating bank:', error);
-      throw error;
+      this.handleError(error, 'Error updating bank');
     }
   }
 
@@ -882,8 +873,7 @@ class DatabaseService {
 
       await this.saveToIndexedDB();
     } catch (error) {
-      console.error('Error deleting bank:', error);
-      throw error;
+      this.handleError(error, 'Error deleting bank');
     }
   }
 
@@ -930,8 +920,7 @@ class DatabaseService {
         updatedAt: row[8]
       })) || [];
     } catch (error) {
-      console.error('Error getting categories:', error);
-      throw error;
+      this.handleError(error, 'Error getting categories');
     }
   }
 
@@ -946,8 +935,7 @@ class DatabaseService {
       await this.createBankYearTables(bankId, year);
       await this.saveToIndexedDB();
     } catch (error) {
-      console.error('Error recreating year tables:', error);
-      throw error;
+      this.handleError(error, 'Error recreating year tables');
     }
   }
 
@@ -974,8 +962,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return true;
     } catch (error) {
-      console.error('Error restoring schema:', error);
-      throw error;
+      this.handleError(error, 'Error restoring schema');
     }
   }
 
@@ -1015,12 +1002,10 @@ class DatabaseService {
         await this.saveToIndexedDB();
         return true;
       } catch (error) {
-        console.error('SQL Error:', { query, values, error });
-        throw error;
+        this.handleError(error, 'SQL Error');
       }
     } catch (error) {
-      console.error('Error adding account:', error);
-      throw error;
+      this.handleError(error, 'Error adding account');
     }
   }
 
@@ -1087,8 +1072,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return true;
     } catch (error) {
-      console.error('Error adding category:', error);
-      throw error;
+      this.handleError(error, 'Error adding category');
     }
   }
 
@@ -1132,12 +1116,10 @@ class DatabaseService {
         await this.saveToIndexedDB();
         return true;
       } catch (error) {
-        console.error('SQL Error:', { query, values, error });
-        throw error;
+        this.handleError(error, 'SQL Error');
       }
     } catch (error) {
-      console.error('Error adding transaction:', error);
-      throw error;
+      this.handleError(error, 'Error adding transaction');
     }
   }
 
@@ -1146,7 +1128,7 @@ class DatabaseService {
     try {
       return str ? JSON.parse(str) : [];
     } catch (e) {
-      console.warn('Error parsing JSON:', e);
+      this.handleError(e, 'Error parsing JSON');
       return [];
     }
   }
@@ -1191,8 +1173,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return true;
     } catch (error) {
-      console.error('Error updating category:', error);
-      throw error;
+      this.handleError(error, 'Error updating category');
     }
   }
 
@@ -1229,8 +1210,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return true;
     } catch (error) {
-      console.error('Error deleting category:', error);
-      throw error;
+      this.handleError(error, 'Error deleting category');
     }
   }
 
@@ -1279,8 +1259,7 @@ class DatabaseService {
       await this.saveToIndexedDB();
       return categoryId;
     } catch (error) {
-      console.error('Error creating category:', error);
-      throw error;
+      this.handleError(error, 'Error creating category');
     }
   }
 
@@ -1329,8 +1308,7 @@ class DatabaseService {
 
       return true;
     } catch (error) {
-      console.error('Error cleaning up duplicate categories:', error);
-      throw error;
+      this.handleError(error, 'Error cleaning up duplicate categories');
     }
   }
 }

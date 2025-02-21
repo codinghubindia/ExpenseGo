@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
       manifest: {
-        name: 'Financial PWA',
-        short_name: 'Financial',
+        name: 'ExpenseGo',
+        short_name: 'ExpenseGo',
         description: 'A Progressive Web App for managing personal finances',
         theme_color: '#2563EB',
         background_color: '#F1F5F9',
@@ -19,7 +19,12 @@ export default defineConfig({
         scope: '/ExpenseGo/',
         start_url: '/ExpenseGo/',
         icons: [
-          // ... your icons configuration
+          {
+            src: 'revenue-growth.svg',
+            sizes: '512x512',
+            type: 'image/svg+xml',
+            purpose: 'any maskable'
+          }
         ]
       },
       workbox: {
@@ -36,13 +41,32 @@ export default defineConfig({
               }
             }
           }
-        ]
+        ],
+        navigateFallback: 'offline.html'
       },
       devOptions: {
-        enabled: true
+        enabled: process.env.NODE_ENV === 'development'
       }
     })
   ],
+  build: {
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true
+      }
+    },
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          mui: ['@mui/material', '@mui/icons-material'],
+          charts: ['recharts', 'chart.js', 'react-chartjs-2']
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     strictPort: true,
