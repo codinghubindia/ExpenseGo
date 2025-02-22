@@ -142,8 +142,16 @@ const Reports = () => {
   const [availableCategories, setAvailableCategories] = useState([]);
 
   const COLORS = useMemo(() => [
-    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD',
-    '#D4A5A5', '#9B6B6B', '#E9D985', '#556270', '#6C5B7B'
+    '#FF6B6B', // Coral Red
+    '#4ECDC4', // Turquoise
+    '#45B7D1', // Sky Blue
+    '#7C8CE3', // Periwinkle
+    '#9B6B9E', // Plum
+    '#5AB9A8', // Sea Green
+    '#5D78FF', // Royal Blue
+    '#64B5F6', // Light Blue
+    '#81C784', // Light Green
+    '#7986CB'  // Indigo
   ], []);
 
   // Add menuItems definition
@@ -192,12 +200,14 @@ const Reports = () => {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
 
-      const [transactionsData, categoriesData] = await Promise.all([
+      // Add accounts to the Promise.all
+      const [transactionsData, categoriesData, accountsData] = await Promise.all([
         DatabaseService.getTransactions(bankId, year),
-        DatabaseService.getCategories(bankId, year)
+        DatabaseService.getCategories(bankId, year),
+        DatabaseService.getAccounts(bankId, year)
       ]);
 
-      if (!Array.isArray(transactionsData) || !Array.isArray(categoriesData)) {
+      if (!Array.isArray(transactionsData) || !Array.isArray(categoriesData) || !Array.isArray(accountsData)) {
         throw new Error('Invalid data received from database');
       }
 
@@ -208,12 +218,12 @@ const Reports = () => {
       const stats = getMonthlyComparison(transactionsData);
       const topCat = getTopCategory(transactionsData, categoriesData);
       
-      // Prepare chart data
+      // Prepare chart data with account balances from accounts table
       const chartData = {
         expensesByCategory: calculateExpensesByCategory(transactionsData, categoriesData),
         incomeByCategory: calculateIncomeByCategory(transactionsData, categoriesData),
         cashFlow: calculateCashFlow(transactionsData),
-        accountBalances: calculateAccountBalances(transactionsData),
+        accountBalances: calculateAccountBalances(accountsData), // Pass accounts data instead
         dailyTrends: calculateDailyTrends(transactionsData)
       };
       
@@ -349,7 +359,7 @@ const Reports = () => {
   }, [currency]);
 
   // Update CustomTooltip component
-  const CustomTooltip = useCallback(({ active, payload, label }) => {
+  const CustomTooltip = useCallback(({ active, payload, label, type }) => {
     if (active && payload && payload.length) {
       return (
         <Box sx={{
@@ -361,7 +371,7 @@ const Reports = () => {
           boxShadow: 3
         }}>
           <Typography variant="subtitle2" gutterBottom>
-            {dayjs(label).format('MMMM')}
+            {dayjs(label).format('MMMM YYYY')}
           </Typography>
           {payload.map((entry, index) => (
             <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
@@ -370,11 +380,11 @@ const Reports = () => {
                   width: 12,
                   height: 12,
                   borderRadius: '50%',
-                  bgcolor: entry.color
+                  bgcolor: entry.color || (entry.dataKey === 'expenses' ? '#FF6B6B' : '#4CAF50')
                 }}
               />
               <Typography variant="body2">
-                {`${entry.name}: ${formatCurrency(entry.value)}`}
+                {`${entry.name || (entry.dataKey === 'expenses' ? 'Expenses' : 'Income')}: ${formatCurrency(Math.abs(entry.value))}`}
               </Typography>
             </Box>
           ))}
@@ -803,40 +813,45 @@ const Reports = () => {
                     <BarChart data={reportData.dailyTrends} barGap={0} barCategoryGap={0}>
                       <defs>
                         <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={theme.palette.error.light} stopOpacity={1}/>
-                          <stop offset="100%" stopColor={theme.palette.error.main} stopOpacity={0.8}/>
+                          <stop offset="0%" stopColor="#FF6B6B" stopOpacity={0.9}/>
+                          <stop offset="50%" stopColor="#FF8787" stopOpacity={0.7}/>
+                          <stop offset="100%" stopColor="#FFA5A5" stopOpacity={0.5}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid 
                         strokeDasharray="3 3" 
                         stroke={theme.palette.divider}
-                        opacity={0.5}
+                        opacity={0.3}
                         vertical={false}
                       />
                       <XAxis 
                         dataKey="date" 
                         stroke={theme.palette.text.secondary}
-                        tick={{ fill: theme.palette.text.secondary }}
+                        tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
                         tickFormatter={(value) => dayjs(value).format('MMM')}
                         axisLine={false}
                         tickLine={false}
                       />
                       <YAxis 
                         stroke={theme.palette.text.secondary}
-                        tick={{ fill: theme.palette.text.secondary }}
+                        tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
                         tickFormatter={(value) => `₹${value}`}
                         axisLine={false}
                         tickLine={false}
                       />
                       <RechartsTooltip 
                         content={<CustomTooltip />}
-                        cursor={{ fill: theme.palette.action.hover }}
+                        cursor={{ 
+                          fill: 'rgba(0, 0, 0, 0.1)',
+                          radius: [4, 4, 0, 0] 
+                        }}
                       />
                       <Bar
                         dataKey="expenses"
+                        name="Expenses"
                         fill="url(#expenseGradient)"
-                        radius={[4, 4, 0, 0]}
-                        maxBarSize={40}
+                        radius={[8, 8, 0, 0]}
+                        maxBarSize={50}
                         minPointSize={5}
                       />
                     </BarChart>
@@ -911,40 +926,45 @@ const Reports = () => {
                     <BarChart data={reportData.dailyTrends} barGap={0} barCategoryGap={0}>
                       <defs>
                         <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor={theme.palette.success.light} stopOpacity={1}/>
-                          <stop offset="100%" stopColor={theme.palette.success.main} stopOpacity={0.8}/>
+                          <stop offset="0%" stopColor="#4CAF50" stopOpacity={0.9}/>
+                          <stop offset="50%" stopColor="#66BB6A" stopOpacity={0.7}/>
+                          <stop offset="100%" stopColor="#81C784" stopOpacity={0.5}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid 
                         strokeDasharray="3 3" 
                         stroke={theme.palette.divider}
-                        opacity={0.5}
+                        opacity={0.3}
                         vertical={false}
                       />
                       <XAxis 
                         dataKey="date" 
                         stroke={theme.palette.text.secondary}
-                        tick={{ fill: theme.palette.text.secondary }}
+                        tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
                         tickFormatter={(value) => dayjs(value).format('MMM')}
                         axisLine={false}
                         tickLine={false}
                       />
                       <YAxis 
                         stroke={theme.palette.text.secondary}
-                        tick={{ fill: theme.palette.text.secondary }}
+                        tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
                         tickFormatter={(value) => `₹${value}`}
                         axisLine={false}
                         tickLine={false}
                       />
                       <RechartsTooltip 
                         content={<CustomTooltip />}
-                        cursor={{ fill: theme.palette.action.hover }}
+                        cursor={{ 
+                          fill: 'rgba(0, 0, 0, 0.1)',
+                          radius: [4, 4, 0, 0] 
+                        }}
                       />
                       <Bar
                         dataKey="income"
+                        name="Income"
                         fill="url(#incomeGradient)"
-                        radius={[4, 4, 0, 0]}
-                        maxBarSize={40}
+                        radius={[8, 8, 0, 0]}
+                        maxBarSize={50}
                         minPointSize={5}
                       />
                     </BarChart>
@@ -970,23 +990,23 @@ const Reports = () => {
               <ResponsiveContainer>
                 <ComposedChart data={reportData.cashFlow} barGap={0} barCategoryGap={0}>
                   <defs>
-                    <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={theme.palette.success.light} stopOpacity={0.8}/>
-                      <stop offset="100%" stopColor={theme.palette.success.main} stopOpacity={0.2}/>
+                    <linearGradient id="cashFlowIncomeGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#4CAF50" stopOpacity={0.9}/>
+                      <stop offset="100%" stopColor="#81C784" stopOpacity={0.6}/>
                     </linearGradient>
-                    <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={theme.palette.error.light} stopOpacity={0.8}/>
-                      <stop offset="100%" stopColor={theme.palette.error.main} stopOpacity={0.2}/>
+                    <linearGradient id="cashFlowExpenseGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#FF6B6B" stopOpacity={0.9}/>
+                      <stop offset="100%" stopColor="#FFA5A5" stopOpacity={0.6}/>
                     </linearGradient>
-                    <linearGradient id="netGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={theme.palette.primary.light} stopOpacity={0.8}/>
-                      <stop offset="100%" stopColor={theme.palette.primary.main} stopOpacity={0.2}/>
+                    <linearGradient id="netFlowGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#2196F3" stopOpacity={0.9}/>
+                      <stop offset="100%" stopColor="#64B5F6" stopOpacity={0.6}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid 
                     strokeDasharray="3 3" 
                     stroke={theme.palette.divider}
-                    opacity={0.5}
+                    opacity={0.3}
                     vertical={false}
                   />
                   <XAxis 
@@ -1010,18 +1030,18 @@ const Reports = () => {
                   />
                   <Bar 
                     dataKey="income" 
-                    fill="url(#incomeGradient)"
-                    radius={[4, 4, 0, 0]}
-                    maxBarSize={40}
+                    fill="url(#cashFlowIncomeGradient)"
+                    radius={[8, 8, 0, 0]}
+                    maxBarSize={50}
                     minPointSize={5}
                     stackId="a"
                     name="Income"
                   />
                   <Bar 
                     dataKey="expenses" 
-                    fill="url(#expenseGradient)"
-                    radius={[4, 4, 0, 0]}
-                    maxBarSize={40}
+                    fill="url(#cashFlowExpenseGradient)"
+                    radius={[8, 8, 0, 0]}
+                    maxBarSize={50}
                     minPointSize={5}
                     stackId="a"
                     name="Expenses"
@@ -1029,8 +1049,8 @@ const Reports = () => {
                   <Line
                     type="monotone"
                     dataKey="netFlow"
-                    stroke={theme.palette.primary.main}
-                    strokeWidth={2}
+                    stroke="url(#netFlowGradient)"
+                    strokeWidth={3}
                     dot={false}
                     name="Net Flow"
                   />
@@ -1051,31 +1071,76 @@ const Reports = () => {
   };
 
   const renderAccountDistribution = () => {
+    // Filter out accounts with zero or negative balance and sort by balance
+    const accountData = reportData.accountBalances
+      .filter(account => account.balance > 0)
+      .map((account, index) => ({
+        name: account.name,
+        value: account.balance,
+        // Use COLORS array instead of account.colorCode if it's black or yellow
+        color: account.colorCode === '#000000' || account.colorCode === '#FFD700' 
+          ? COLORS[index % COLORS.length] 
+          : account.colorCode
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    const total = accountData.reduce((sum, account) => sum + account.value, 0);
+
     return (
       <Box sx={{ mt: 3 }}>
         <Card>
           <CardContent>
-            <Typography variant="h6">Account Balance Distribution</Typography>
-            <Box sx={{ height: 400, mt: 2 }}>
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie
-                    data={reportData.accountBalances}
-                    dataKey="balance"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={150}
-                  >
-                    {reportData.accountBalances.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip content={<CustomTooltip />} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </Box>
+            <Typography variant="h6" gutterBottom>
+              Account Balance Distribution
+            </Typography>
+            {accountData.length > 0 ? (
+              <Box sx={{ height: 400 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={accountData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={150}
+                      label={({name, value}) => `${name} (${((value/total) * 100).toFixed(1)}%)`}
+                    >
+                      {accountData.map((entry, index) => (
+                        <Cell 
+                          key={`cell-${index}`}
+                          fill={entry.color}
+                          stroke={theme.palette.background.paper}
+                          strokeWidth={2}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) => formatCurrency(value)}
+                      contentStyle={{
+                        backgroundColor: theme.palette.background.paper,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: '8px',
+                        boxShadow: theme.shadows[3]
+                      }}
+                    />
+                    <Legend
+                      formatter={(value, entry) => {
+                        const { payload } = entry;
+                        return `${value} (${formatCurrency(payload.value)})`;
+                      }}
+                      iconType="circle"
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </Box>
+            ) : (
+              <Box sx={{ p: 3, textAlign: 'center' }}>
+                <Typography color="text.secondary">
+                  No accounts with positive balance found
+                </Typography>
+              </Box>
+            )}
           </CardContent>
         </Card>
       </Box>
@@ -1548,22 +1613,12 @@ const Reports = () => {
     return Array.from(incomeMap, ([name, value]) => ({ name, value }));
   };
 
-  const calculateAccountBalances = (transactions) => {
-    const accountMap = new Map();
-    
-    transactions.forEach(t => {
-      if (t.accountName) {
-        const current = accountMap.get(t.accountName) || { name: t.accountName, balance: 0 };
-        if (t.type === 'income') {
-          current.balance += t.amount;
-        } else if (t.type === 'expense') {
-          current.balance -= Math.abs(t.amount);
-        }
-        accountMap.set(t.accountName, current);
-      }
-    });
-
-    return Array.from(accountMap.values());
+  const calculateAccountBalances = (accounts) => {
+    return accounts.map(account => ({
+      name: account.name,
+      balance: account.currentBalance,
+      colorCode: account.colorCode || account.color || '#000000'
+    }));
   };
 
   if (loading) {

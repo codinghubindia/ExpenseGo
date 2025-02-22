@@ -157,6 +157,8 @@ class DatabaseService {
     maxTransactions: 1000
   };
 
+  static allowNegativeBalance = false;
+
   static handleError(error, context) {
     // Remove development logging
     if (process.env.NODE_ENV === 'production') {
@@ -858,14 +860,17 @@ class DatabaseService {
   }
 
   static async createTransaction(bankId, year, transactionData) {
-    let db = null;
     try {
-      await this.validateTransactionData(transactionData, bankId, year);
-      await this.initializeDatabase();
-      await this.createBankYearTables(bankId, year);
+      await this.beginTransaction();
+
+      // Validate transaction data
+      if (!transactionData.accountId || !transactionData.type || transactionData.amount === undefined) {
+        throw new Error('Missing required transaction fields');
+      }
+
       const tableName = `transactions_${bankId}_${year}`;
 
-      // Format transaction data first
+      // Convert camelCase to snake_case for database columns
       const formattedData = {
         transaction_id: transactionData.transactionId || Date.now(),
         type: transactionData.type || 'expense',
@@ -886,51 +891,28 @@ class DatabaseService {
         updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
       };
 
-      // Create a new database connection for this transaction
-      db = this.db;
+      // Update account balance first
+      await this.updateAccountBalance(bankId, year, transactionData.accountId, formattedData.amount);
 
-      // Start transaction
-      await db.exec('BEGIN TRANSACTION');
-
-      try {
-        // Update account balance
-        await this.updateAccountBalance(bankId, year, transactionData.accountId, formattedData.amount);
-
-        // Handle transfers
-        if (transactionData.type === 'transfer' && transactionData.toAccountId) {
-          await this.updateAccountBalance(bankId, year, transactionData.toAccountId, Math.abs(formattedData.amount));
-        }
-
-        // Insert transaction
-        const columns = Object.keys(formattedData).join(', ');
-        const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
-        const values = Object.values(formattedData);
-
-        await db.exec(`
-          INSERT INTO ${tableName} (${columns})
-          VALUES (${placeholders})
-        `, values);
-
-        // Commit transaction
-        await db.exec('COMMIT');
-
-        // Save to IndexedDB after successful commit
-        await this.saveToIndexedDB();
-        return formattedData.transaction_id;
-
-      } catch (error) {
-        // Rollback on error
-        if (db) {
-          try {
-            await db.exec('ROLLBACK');
-          } catch (rollbackError) {
-            console.error('Rollback failed:', rollbackError);
-          }
-        }
-        throw error;
+      // Handle transfers
+      if (transactionData.type.toLowerCase() === 'transfer' && transactionData.toAccountId) {
+        await this.updateAccountBalance(bankId, year, transactionData.toAccountId, Math.abs(formattedData.amount));
       }
+
+      // Insert transaction
+      const columns = Object.keys(formattedData).join(', ');
+      const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
+      const values = Object.values(formattedData);
+
+      await this.db.exec(`
+        INSERT INTO ${tableName} (${columns})
+        VALUES (${placeholders})
+      `, values);
+
+      await this.commitTransaction();
+      return formattedData.transaction_id;
     } catch (error) {
-      this.handleError(error, 'Error creating transaction');
+      await this.rollbackTransaction();
       throw error;
     }
   }
@@ -1000,8 +982,11 @@ class DatabaseService {
 
   // Helper methods
   static mapAccountRow(row) {
-    const [accountId, name, type, initialBalance, currentBalance, currency, colorCode, icon, encryptedAccountNumber, notes, isActive, createdAt, updatedAt] = row;
-    return {
+    if (!Array.isArray(row) || row.length < 13) {
+      throw new Error('Invalid account data format');
+    }
+
+    const [
       accountId,
       name,
       type,
@@ -1012,13 +997,38 @@ class DatabaseService {
       icon,
       encryptedAccountNumber,
       notes,
-      isActive: Boolean(isActive),
+      isActive,
       createdAt,
       updatedAt
+    ] = row;
+
+    // Validate required fields
+    if (!accountId || !name || !type) {
+      throw new Error('Missing required account fields');
+    }
+
+    return {
+      accountId,
+      name: String(name),
+      type: String(type),
+      initialBalance: Number(initialBalance) || 0,
+      currentBalance: Number(currentBalance) || 0,
+      currency: String(currency || 'USD'),
+      colorCode: String(colorCode || '#000000'),
+      icon: String(icon || '💰'),
+      encryptedAccountNumber: encryptedAccountNumber || null,
+      notes: notes || '',
+      isActive: Boolean(isActive),
+      createdAt: createdAt || new Date().toISOString(),
+      updatedAt: updatedAt || new Date().toISOString()
     };
   }
 
   static mapTransactionRow(row) {
+    if (!Array.isArray(row) || row.length < 17) {
+      throw new Error('Invalid transaction data format');
+    }
+
     const [
       transactionId,
       type,
@@ -1039,31 +1049,39 @@ class DatabaseService {
       categoryName
     ] = row;
 
+    // Validate required fields
+    if (!transactionId || !type || amount === undefined || !date || !accountId) {
+      throw new Error('Missing required transaction fields');
+    }
+
     return {
       transactionId,
       type: String(type),
-      // Keep the sign of the amount as stored in the database
       amount: Number(amount),
-      date: dayjs(date),
+      date: dayjs(date).isValid() ? dayjs(date) : dayjs(), // Fallback to current date if invalid
       accountId,
-      toAccountId,
-      categoryId,
-      description,
-      paymentMethod,
-      location,
-      notes,
-      tags: this.parseJSONSafely(tags),
-      attachments: this.parseJSONSafely(attachments),
-      createdAt,
-      updatedAt,
-      accountName,
-      categoryName
+      toAccountId: toAccountId || null,
+      categoryId: categoryId || null,
+      description: description || '',
+      paymentMethod: paymentMethod || 'cash',
+      location: location || '',
+      notes: notes || '',
+      tags: this.parseJSONSafely(tags) || [],
+      attachments: this.parseJSONSafely(attachments) || [],
+      createdAt: createdAt || new Date().toISOString(),
+      updatedAt: updatedAt || new Date().toISOString(),
+      accountName: accountName || '',
+      categoryName: categoryName || ''
     };
   }
 
   static async updateAccountBalance(bankId, year, accountId, amount) {
     try {
-      // Get current balance first
+      // Don't start a new transaction here since it's called within createTransaction
+      if (!this.isValidTableId(bankId) || !this.isValidTableId(year)) {
+        throw new Error('Invalid bank or year identifier');
+      }
+
       const result = await this.db.exec(`
         SELECT current_balance 
         FROM accounts_${bankId}_${year}
@@ -1075,7 +1093,17 @@ class DatabaseService {
       }
 
       const currentBalance = Number(result[0].values[0][0]);
-      const newBalance = currentBalance + Number(amount);
+      const amountNum = Number(amount);
+      
+      if (isNaN(amountNum)) {
+        throw new Error('Invalid amount');
+      }
+
+      const newBalance = currentBalance + amountNum;
+
+      if (newBalance < 0 && !this.allowNegativeBalance) {
+        throw new Error('Insufficient balance');
+      }
 
       await this.db.exec(`
         UPDATE accounts_${bankId}_${year}
@@ -1084,9 +1112,24 @@ class DatabaseService {
         WHERE account_id = ?
       `, [newBalance, accountId]);
 
+      return newBalance;
     } catch (error) {
-      this.handleError(error, 'Error updating account balance');
-      throw error;
+      throw error; // Let the parent transaction handle rollback
+    }
+  }
+
+  // Add helper method for table ID validation
+  static isValidTableId(id) {
+    return Number.isInteger(Number(id)) && id > 0;
+  }
+
+  // Fix JSON parsing helper
+  static parseJSONSafely(jsonString) {
+    if (!jsonString) return null;
+    try {
+      return JSON.parse(jsonString);
+    } catch {
+      return null;
     }
   }
 
@@ -1443,16 +1486,6 @@ class DatabaseService {
     }
   }
 
-  // Add helper method for safe JSON parsing
-  static parseJSONSafely(str) {
-    try {
-      return str ? JSON.parse(str) : [];
-    } catch (e) {
-      this.handleError(e, 'Error parsing JSON');
-      return [];
-    }
-  }
-
   static async updateCategory(bankId, year, categoryId, categoryData) {
     try {
       await this.initializeDatabase();
@@ -1794,6 +1827,44 @@ class DatabaseService {
       return true;
     } catch (error) {
       this.handleError(error, 'Error checking balance');
+      throw error;
+    }
+  }
+
+  // Add transaction management helpers
+  static async beginTransaction() {
+    try {
+      await this.db.exec('BEGIN TRANSACTION');
+    } catch (error) {
+      if (error.message.includes('within a transaction')) {
+        // Transaction already started, ignore
+        return;
+      }
+      throw error;
+    }
+  }
+
+  static async commitTransaction() {
+    try {
+      await this.db.exec('COMMIT');
+      await this.saveToIndexedDB(); // Ensure changes are persisted
+    } catch (error) {
+      if (error.message.includes('no transaction is active')) {
+        // No transaction to commit, ignore
+        return;
+      }
+      throw error;
+    }
+  }
+
+  static async rollbackTransaction() {
+    try {
+      await this.db.exec('ROLLBACK');
+    } catch (error) {
+      if (error.message.includes('no transaction is active')) {
+        // No transaction to rollback, ignore
+        return;
+      }
       throw error;
     }
   }
