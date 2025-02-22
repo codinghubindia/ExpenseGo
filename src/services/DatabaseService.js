@@ -621,35 +621,63 @@ class DatabaseService {
 
   // Modify deleteAccount to prevent default account deletion
   static async deleteAccount(bankId, year, accountId) {
+    let transaction = null;
     try {
       await this.initializeDatabase();
-      
-      // Check if account is default
-      const isDefault = await this.db.exec(`
-        SELECT is_default FROM accounts_${bankId}_${year}
+      const tableName = `accounts_${bankId}_${year}`;
+
+      // Start transaction
+      await this.db.exec('BEGIN TRANSACTION');
+      transaction = true;
+
+      // First check if account exists and is not a default account
+      const accountResult = await this.db.exec(`
+        SELECT is_default, name 
+        FROM ${tableName}
         WHERE account_id = ?
       `, [accountId]);
 
-      if (isDefault[0]?.values?.[0]?.[0] === 1) {
+      if (!accountResult[0]?.values?.length) {
+        throw new Error('Account not found');
+      }
+
+      const [isDefault, accountName] = accountResult[0].values[0];
+      if (isDefault) {
         throw new Error('Cannot delete default account');
       }
 
-      // First check if account has any transactions
-      const transactions = await this.getTransactionsByAccount(bankId, year, accountId);
-      if (transactions && transactions.length > 0) {
-        throw new Error('Cannot delete account with existing transactions');
+      // Check for any related transactions
+      const transactionsTable = `transactions_${bankId}_${year}`;
+      const transactionsResult = await this.db.exec(`
+        SELECT COUNT(*) 
+        FROM ${transactionsTable}
+        WHERE account_id = ? OR to_account_id = ?
+      `, [accountId, accountId]);
+
+      const transactionCount = transactionsResult[0]?.values[0][0] || 0;
+      if (transactionCount > 0) {
+        throw new Error(`Cannot delete account "${accountName}" because it has ${transactionCount} transaction(s). Please delete the transactions first.`);
       }
 
-      // Delete the account directly instead of soft delete
+      // If no transactions found, delete the account
       await this.db.exec(`
-        DELETE FROM accounts_${bankId}_${year}
+        DELETE FROM ${tableName}
         WHERE account_id = ?
       `, [accountId]);
 
+      // Commit transaction
+      await this.db.exec('COMMIT');
+      transaction = null;
+
+      // Save changes to IndexedDB
       await this.saveToIndexedDB();
       return true;
+
     } catch (error) {
-      this.handleError(error, 'Error deleting account');
+      if (transaction) {
+        await this.db.exec('ROLLBACK');
+      }
+      console.error('Error deleting account:', error);
       throw error;
     }
   }
@@ -859,59 +887,60 @@ class DatabaseService {
     }
   }
 
-  static async createTransaction(bankId, year, transactionData) {
+  static async addTransaction(bankId, year, transactionData) {
     try {
       await this.beginTransaction();
 
-      // Validate transaction data
-      if (!transactionData.accountId || !transactionData.type || transactionData.amount === undefined) {
-        throw new Error('Missing required transaction fields');
+      const tableName = `transactions_${bankId}_${year}`;
+      const amount = Number(transactionData.amount);
+
+      // For transfers, handle both accounts
+      if (transactionData.type === 'transfer') {
+        // Check balance of source account
+        await this.checkSufficientBalance(bankId, year, transactionData.accountId, amount);
+
+        // Update source account (deduct amount)
+        await this.updateAccountBalance(bankId, year, transactionData.accountId, amount);
+
+        // Update destination account (add amount)
+        await this.updateAccountBalance(bankId, year, transactionData.toAccountId, Math.abs(amount));
+
+      } else {
+        // For regular transactions
+        if (transactionData.type === 'expense') {
+          await this.checkSufficientBalance(bankId, year, transactionData.accountId, amount);
+        }
+        await this.updateAccountBalance(bankId, year, transactionData.accountId, amount);
       }
 
-      const tableName = `transactions_${bankId}_${year}`;
-
-      // Convert camelCase to snake_case for database columns
+      // Insert the transaction
       const formattedData = {
         transaction_id: transactionData.transactionId || Date.now(),
-        type: transactionData.type || 'expense',
-        amount: transactionData.type.toLowerCase() === 'expense' ? 
-          -Math.abs(Number(transactionData.amount)) : 
-          Math.abs(Number(transactionData.amount)),
-        date: dayjs(transactionData.date).format('YYYY-MM-DD'),
-        account_id: parseInt(transactionData.accountId, 10),
-        to_account_id: transactionData.toAccountId ? parseInt(transactionData.toAccountId, 10) : null,
-        category_id: transactionData.categoryId ? parseInt(transactionData.categoryId, 10) : null,
+        type: transactionData.type,
+        amount: amount,
+        date: transactionData.date,
+        account_id: transactionData.accountId,
+        to_account_id: transactionData.toAccountId || null,
+        category_id: transactionData.categoryId,
         description: transactionData.description || '',
         payment_method: transactionData.paymentMethod || 'cash',
         location: transactionData.location || '',
-        notes: transactionData.notes || '',
-        tags: JSON.stringify(transactionData.tags || []),
-        attachments: JSON.stringify(transactionData.attachments || []),
         created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
         updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
       };
 
-      // Update account balance first
-      await this.updateAccountBalance(bankId, year, transactionData.accountId, formattedData.amount);
-
-      // Handle transfers
-      if (transactionData.type.toLowerCase() === 'transfer' && transactionData.toAccountId) {
-        await this.updateAccountBalance(bankId, year, transactionData.toAccountId, Math.abs(formattedData.amount));
-      }
-
-      // Insert transaction
-      const columns = Object.keys(formattedData).join(', ');
-      const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
-      const values = Object.values(formattedData);
+        const columns = Object.keys(formattedData).join(', ');
+        const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
+        const values = Object.values(formattedData);
 
       await this.db.exec(`
-        INSERT INTO ${tableName} (${columns})
-        VALUES (${placeholders})
-      `, values);
+          INSERT INTO ${tableName} (${columns})
+          VALUES (${placeholders})
+        `, values);
 
       await this.commitTransaction();
-      return formattedData.transaction_id;
-    } catch (error) {
+        return formattedData.transaction_id;
+      } catch (error) {
       await this.rollbackTransaction();
       throw error;
     }
@@ -1422,274 +1451,22 @@ class DatabaseService {
     }
   }
 
-  static async addTransaction(bankId, year, transaction) {
-    try {
-      if (!transaction) throw new Error('Transaction data is required');
-
-      await this.initializeDatabase();
-      await this.createBankYearTables(bankId, year);
-      const tableName = `transactions_${bankId}_${year}`;
-
-      // Format transaction data first
-      const transactionData = {
-        transaction_id: transaction.transactionId || Date.now(),
-        type: transaction.type || 'expense',
-        // For expenses, store as negative value, for others keep as is
-        amount: transaction.type.toLowerCase() === 'expense' ? 
-          -Math.abs(Number(transaction.amount || 0)) : 
-          Math.abs(Number(transaction.amount || 0)),
-        date: dayjs(transaction.date).format('YYYY-MM-DD'),
-        account_id: parseInt(transaction.accountId, 10),
-        to_account_id: transaction.toAccountId ? parseInt(transaction.toAccountId, 10) : null,
-        category_id: transaction.categoryId ? parseInt(transaction.categoryId, 10) : null,
-        description: transaction.description || '',
-        payment_method: transaction.paymentMethod || 'cash',
-        location: transaction.location || '',
-        notes: transaction.notes || '',
-        tags: JSON.stringify(transaction.tags || []),
-        attachments: JSON.stringify(transaction.attachments || []),
-        created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-        updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
-      };
-
-      await this.db.exec('BEGIN TRANSACTION');
-
-      try {
-        // Update account balance
-        await this.updateAccountBalance(bankId, year, transaction.accountId, transactionData.amount);
-
-        // Handle transfers
-        if (transaction.type.toLowerCase() === 'transfer' && transaction.toAccountId) {
-          await this.updateAccountBalance(bankId, year, transaction.toAccountId, Math.abs(transactionData.amount));
-        }
-
-        // Insert transaction
-        const columns = Object.keys(transactionData).join(', ');
-        const placeholders = Object.keys(transactionData).map(() => '?').join(', ');
-        const values = Object.values(transactionData);
-
-        await this.db.exec(`
-          INSERT INTO ${tableName} (${columns})
-          VALUES (${placeholders})
-        `, values);
-
-        await this.db.exec('COMMIT');
-        await this.saveToIndexedDB();
-        return transactionData.transaction_id;
-      } catch (error) {
-        await this.db.exec('ROLLBACK');
-        throw error;
-      }
-    } catch (error) {
-      this.handleError(error, 'Error adding transaction');
-      throw error;
-    }
-  }
-
-  static async updateCategory(bankId, year, categoryId, categoryData) {
-    try {
-      await this.initializeDatabase();
-      const tableName = `categories_${bankId}_${year}`;
-
-      // Check if category with same name exists (excluding current category)
-      const existing = await this.db.exec(`
-        SELECT category_id FROM ${tableName}
-        WHERE name = ? AND type = ? AND category_id != ?
-      `, [categoryData.name, categoryData.type, categoryId]);
-
-      if (existing[0]?.values?.length > 0) {
-        throw new Error('A category with this name already exists');
-      }
-
-      const query = `
-        UPDATE ${tableName}
-        SET 
-          name = ?,
-          type = ?,
-          parent_category_id = ?,
-          color_code = ?,
-          icon = ?,
-          updated_at = ?
-        WHERE category_id = ?
-      `;
-
-      await this.db.exec(query, [
-        categoryData.name,
-        categoryData.type,
-        categoryData.parentCategoryId || null,
-        categoryData.colorCode || categoryData.color || '#000000',
-        categoryData.icon || '📁',
-        dayjs().format('YYYY-MM-DD HH:mm:ss'),
-        categoryId
-      ]);
-
-      await this.saveToIndexedDB();
-      return true;
-    } catch (error) {
-      this.handleError(error, 'Error updating category');
-    }
-  }
-
-  static async deleteCategory(bankId, year, categoryId) {
-    try {
-      await this.initializeDatabase();
-      const tableName = `categories_${bankId}_${year}`;
-
-      // Check if category is used in any transactions
-      const transactions = await this.db.exec(`
-        SELECT COUNT(*) FROM transactions_${bankId}_${year}
-        WHERE category_id = ?
-      `, [categoryId]);
-
-      if (transactions[0]?.values[0][0] > 0) {
-        throw new Error('Cannot delete category: it is used in transactions');
-      }
-
-      // Check if category is default
-      const isDefault = await this.db.exec(`
-        SELECT is_default FROM ${tableName}
-        WHERE category_id = ?
-      `, [categoryId]);
-
-      if (isDefault[0]?.values[0][0] === 1) {
-        throw new Error('Cannot delete default category');
-      }
-
-      await this.db.exec(`
-        DELETE FROM ${tableName}
-        WHERE category_id = ?
-      `, [categoryId]);
-
-      await this.saveToIndexedDB();
-      return true;
-    } catch (error) {
-      this.handleError(error, 'Error deleting category');
-    }
-  }
-
-  static async createCategory(bankId, year, categoryData) {
-    try {
-      await this.initializeDatabase();
-      const tableName = `categories_${bankId}_${year}`;
-
-      // Check if category with same name exists
-      const existing = await this.db.exec(`
-        SELECT category_id FROM ${tableName}
-        WHERE name = ? AND type = ?
-      `, [categoryData.name, categoryData.type]);
-
-      if (existing[0]?.values?.length > 0) {
-        throw new Error('A category with this name already exists');
-      }
-
-      const categoryId = Date.now();
-      const query = `
-        INSERT INTO ${tableName} (
-          category_id,
-          name,
-          type,
-          parent_category_id,
-          color_code,
-          icon,
-          is_default,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-
-      await this.db.exec(query, [
-        categoryId,
-        categoryData.name,
-        categoryData.type,
-        categoryData.parentCategoryId || null,
-        categoryData.colorCode || categoryData.color || '#000000',
-        categoryData.icon || '📁',
-        0, // not a default category
-        dayjs().format('YYYY-MM-DD HH:mm:ss'),
-        dayjs().format('YYYY-MM-DD HH:mm:ss')
-      ]);
-
-      await this.saveToIndexedDB();
-      return categoryId;
-    } catch (error) {
-      this.handleError(error, 'Error creating category');
-    }
-  }
-
-  static async cleanupDuplicateCategories(bankId, year) {
-    try {
-      await this.initializeDatabase();
-      const tableName = `categories_${bankId}_${year}`;
-
-      // Find duplicates
-      const duplicates = await this.db.exec(`
-        WITH duplicates AS (
-          SELECT 
-            name,
-            type,
-            MIN(category_id) as keep_id,
-            COUNT(*) as count
-          FROM ${tableName}
-          GROUP BY name, type
-          HAVING count > 1
-        )
-        SELECT d.name, d.type, d.keep_id, c.category_id
-        FROM duplicates d
-        JOIN ${tableName} c ON c.name = d.name AND c.type = d.type
-        WHERE c.category_id != d.keep_id
-      `);
-
-      if (duplicates[0]?.values?.length > 0) {
-        // Update transactions to point to the kept category
-        for (const [name, type, keepId, deleteId] of duplicates[0].values) {
-          // Update transactions
-          await this.db.exec(`
-            UPDATE transactions_${bankId}_${year}
-            SET category_id = ?
-            WHERE category_id = ?
-          `, [keepId, deleteId]);
-
-          // Delete duplicate category
-          await this.db.exec(`
-            DELETE FROM ${tableName}
-            WHERE category_id = ?
-          `, [deleteId]);
-        }
-
-        await this.saveToIndexedDB();
-      }
-
-      return true;
-    } catch (error) {
-      this.handleError(error, 'Error cleaning up duplicate categories');
-    }
-  }
-
-  static async getTransactionsByAccount(bankId, year, accountId) {
-    try {
-      await this.initializeDatabase();
-      const result = await this.db.exec(`
-        SELECT * FROM transactions_${bankId}_${year}
-        WHERE account_id = ? OR to_account_id = ?
-      `, [accountId, accountId]);
-      return result || [];
-    } catch (error) {
-      this.handleError(error, 'Error getting transactions by account');
-      return [];
-    }
-  }
-
   static async createDefaultAccounts(bankId, year) {
     try {
+      // First check if any default accounts exist
+      const existingDefaults = await this.db.exec(`
+        SELECT name FROM accounts_${bankId}_${year}
+        WHERE is_default = 1
+      `);
+
+      // If default accounts already exist, skip creation
+      if (existingDefaults[0]?.values?.length > 0) {
+        return;
+      }
+
+      // Create default accounts only if none exist
       for (const defaultAccount of this.DEFAULT_ACCOUNTS) {
         try {
-          // Check if default account exists
-          const exists = await this.db.exec(`
-            SELECT account_id FROM accounts_${bankId}_${year}
-            WHERE name = ? AND is_default = 1
-          `, [defaultAccount.name]);
-
-          if (!exists[0]?.values?.length) {
             await this.db.exec(`
               INSERT INTO accounts_${bankId}_${year} (
                 name,
@@ -1714,9 +1491,9 @@ class DatabaseService {
               defaultAccount.icon,
               defaultAccount.notes
             ]);
-          }
         } catch (error) {
-          this.handleError(error, `Error creating default account: ${defaultAccount.name}`);
+          // Log error but continue with other accounts
+          console.error(`Error creating default account: ${defaultAccount.name}`, error);
         }
       }
       await this.saveToIndexedDB();
@@ -1866,6 +1643,60 @@ class DatabaseService {
         return;
       }
       throw error;
+    }
+  }
+
+  static async getTransactionsByAccount(bankId, year, accountId) {
+    try {
+      const db = await this.getDatabase();
+      const transactions = await db.transaction('transactions')
+        .objectStore('transactions')
+        .index('accountId')
+        .getAll(accountId);
+
+      return transactions.filter(tx => 
+        tx.bankId === bankId && 
+        new Date(tx.date).getFullYear() === year
+      );
+    } catch (error) {
+      console.error('Error getting transactions by account:', error);
+      throw new Error('Failed to get transactions for account');
+    }
+  }
+
+  static async createTransaction(bankId, year, transactionData) {
+    try {
+      await this.initializeDatabase();
+      const tableName = `transactions_${bankId}_${year}`;
+
+      // Format the data
+      const formattedData = {
+        type: transactionData.type,
+        amount: transactionData.amount,
+        date: dayjs(transactionData.date).format('YYYY-MM-DD'),
+        account_id: transactionData.accountId,
+        to_account_id: transactionData.toAccountId || null,
+        category_id: transactionData.categoryId,
+        description: transactionData.description || '',
+        payment_method: transactionData.paymentMethod || 'cash',
+        location: transactionData.location || '',
+        created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
+      };
+
+      const columns = Object.keys(formattedData).join(', ');
+      const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
+      const values = Object.values(formattedData);
+
+      await this.db.exec(`
+        INSERT INTO ${tableName} (${columns})
+        VALUES (${placeholders})
+      `, values);
+
+      await this.saveToIndexedDB();
+      return true;
+    } catch (error) {
+      this.handleError(error, 'Error creating transaction');
     }
   }
 }

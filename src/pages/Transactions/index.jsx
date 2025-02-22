@@ -21,12 +21,19 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Chip,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
   Search as SearchIcon,
+  ArrowUpward,
+  ArrowDownward,
+  CompareArrows,
+  Circle,
+  ArrowForward,
+  FilterList as FilterIcon
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -35,19 +42,18 @@ import dayjs from 'dayjs';
 import { useApp } from '../../contexts/AppContext';
 import DatabaseService from '../../services/DatabaseService';
 import { useRegion } from '../../contexts/RegionContext';
-import ReportExport from '../../services/ReportExport';
 
 const Transactions = () => {
   const theme = useTheme();
   const { currentBank, currentYear } = useApp();
-  const { currency } = useRegion(); // Add RegionContext usage
+  const { currency } = useRegion();
   const [transactions, setTransactions] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [formData, setFormData] = useState({
-    transactionId: null,  // Add this line
+    transactionId: null,
     type: 'expense',
     amount: '',
     date: dayjs(),
@@ -67,7 +73,9 @@ const Transactions = () => {
     categoryId: 'all'
   });
   const [openDialog, setOpenDialog] = useState(false);
-  const [exportFormat, setExportFormat] = useState('');
+  const [deleteDialog, setDeleteDialog] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -99,7 +107,7 @@ const Transactions = () => {
     setFormData({
       transactionId: transaction.transactionId,
       type: transaction.type,
-      amount: Math.abs(transaction.amount), // Remove negative sign for expenses
+      amount: Math.abs(transaction.amount),
       date: dayjs(transaction.date),
       accountId: transaction.accountId,
       toAccountId: transaction.toAccountId || '',
@@ -117,7 +125,6 @@ const Transactions = () => {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
 
-      // Remove isRecurring from transactionData
       const transactionData = {
         type: formData.type,
         amount: formData.type === 'expense' ? -Math.abs(Number(formData.amount)) : Number(formData.amount),
@@ -167,6 +174,21 @@ const Transactions = () => {
     setError(null);
   };
 
+  const resetForm = () => {
+    setFormData({
+      transactionId: null,
+      type: 'expense',
+      amount: '',
+      date: dayjs(),
+      accountId: '',
+      toAccountId: '',
+      categoryId: '',
+      description: '',
+      paymentMethod: 'cash',
+      location: ''
+    });
+  };
+
   const filteredTransactions = transactions.filter(t => {
     if (filters.search && !t.description.toLowerCase().includes(filters.search.toLowerCase())) return false;
     if (filters.type !== 'all' && t.type !== filters.type) return false;
@@ -193,12 +215,10 @@ const Transactions = () => {
         await loadData();
       } catch (error) {
         console.error('Error deleting transaction:', error);
-        // TODO: Show error notification
       }
     }
   };
 
-  // Add formatCurrency function
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
@@ -208,7 +228,6 @@ const Transactions = () => {
     }).format(Math.abs(amount));
   };
 
-  // Update amount input in form
   const amountInput = (
     <TextField
       fullWidth
@@ -223,7 +242,6 @@ const Transactions = () => {
     />
   );
 
-  // Update transaction amount display
   const renderTransactionAmount = (transaction) => (
     <Typography
       variant="subtitle1"
@@ -240,21 +258,50 @@ const Transactions = () => {
     </Typography>
   );
 
-  const handleExport = async () => {
-    try {
-      await ReportExport.exportTransactions(
-        filteredTransactions,
-        accounts,
-        categories,
-        exportFormat,
-        currency
-      );
-      setExportFormat('');
-    } catch (error) {
-      console.error('Export failed:', error);
-      setError('Failed to export transactions: ' + error.message);
+  const getTransactionIcon = (type) => {
+    switch (type) {
+      case 'income':
+        return <ArrowUpward sx={{ color: 'success.main' }} />;
+      case 'expense':
+        return <ArrowDownward sx={{ color: 'error.main' }} />;
+      case 'transfer':
+        return <CompareArrows sx={{ color: 'info.main' }} />;
+      default:
+        return <Circle />;
     }
   };
+
+  const handleDeleteClick = (transaction) => {
+    setTransactionToDelete(transaction);
+    setDeleteDialog(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    try {
+      if (!transactionToDelete) return;
+
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+      
+      await DatabaseService.deleteTransaction(bankId, year, transactionToDelete.transactionId);
+      await loadData();
+      setDeleteDialog(false);
+      setTransactionToDelete(null);
+      setError(null);
+    } catch (error) {
+      console.error('Error deleting transaction:', error);
+      setError(error.message || 'Failed to delete transaction');
+    }
+  };
+
+  // Add payment method options
+  const PAYMENT_METHODS = [
+    { value: 'cash', label: 'Cash' },
+    { value: 'card', label: 'Card' },
+    { value: 'upi', label: 'UPI' },
+    { value: 'netbanking', label: 'Net Banking' },
+    { value: 'other', label: 'Other' }
+  ];
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -265,25 +312,6 @@ const Transactions = () => {
             Transactions
           </Typography>
           <Box sx={{ display: 'flex', gap: 2 }}>
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-              <Select
-                value={exportFormat}
-                onChange={(e) => setExportFormat(e.target.value)}
-                displayEmpty
-              >
-                <MenuItem value="" disabled>Export As</MenuItem>
-                <MenuItem value={ReportExport.FORMATS.PDF}>PDF</MenuItem>
-                <MenuItem value={ReportExport.FORMATS.EXCEL}>Excel</MenuItem>
-                <MenuItem value={ReportExport.FORMATS.CSV}>CSV</MenuItem>
-              </Select>
-            </FormControl>
-            <Button
-              variant="outlined"
-              onClick={handleExport}
-              disabled={!exportFormat || loading}
-            >
-              Export
-            </Button>
             <Button
               variant="contained"
               startIcon={<AddIcon />}
@@ -309,10 +337,11 @@ const Transactions = () => {
                   <SearchIcon color="action" />
                   <Typography variant="h6">Filters</Typography>
                 </Box>
-                <Grid container spacing={2}>
+                <Grid container spacing={{ xs: 2, md: 3 }}>
                   <Grid item xs={12} sm={6} md={3}>
                     <TextField
                       fullWidth
+                      size={isMobile ? "small" : "medium"}
                       placeholder="Search transactions..."
                       value={filters.search}
                       onChange={(e) => handleFilterChange('search', e.target.value)}
@@ -383,7 +412,7 @@ const Transactions = () => {
           <Dialog 
             open={openDialog} 
             onClose={handleCloseDialog}
-            maxWidth="md"
+            fullScreen={isMobile}
             fullWidth
           >
             <DialogTitle>
@@ -489,16 +518,17 @@ const Transactions = () => {
                   </Grid>
 
                   <Grid item xs={12} md={3}>
-                    <FormControl fullWidth>
+                    <FormControl fullWidth margin="dense">
                       <InputLabel>Payment Method</InputLabel>
                       <Select
                         value={formData.paymentMethod}
                         onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
-                        label="Payment Method"
                       >
-                        <MenuItem value="cash">Cash</MenuItem>
-                        <MenuItem value="card">Card</MenuItem>
-                        <MenuItem value="bank">Bank Transfer</MenuItem>
+                        {PAYMENT_METHODS.map(method => (
+                          <MenuItem key={method.value} value={method.value}>
+                            {method.label}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </FormControl>
                   </Grid>
@@ -528,55 +558,47 @@ const Transactions = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Box sx={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  alignItems: 'center',
-                  mb: 3 
-                }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                   <Typography variant="h6">
                     Transaction History
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant="subtitle2" color="text.secondary">
                     {filteredTransactions.length} transactions found
                   </Typography>
                 </Box>
 
-                {loading ? (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-                    <CircularProgress />
-                  </Box>
-                ) : filteredTransactions.length === 0 ? (
-                  <Box sx={{ 
-                    textAlign: 'center', 
-                    py: 8,
-                    bgcolor: 'background.subtle',
-                    borderRadius: 2
-                  }}>
-                    <Typography color="text.secondary">
-                      No transactions found
-                    </Typography>
-                  </Box>
-                ) : (
-                  <Stack spacing={2}>
-                    {filteredTransactions.map((transaction) => (
+                <Stack spacing={2}>
+                  {filteredTransactions.map((transaction) => {
+                    const account = accounts.find(a => a.accountId === transaction.accountId);
+                    const category = categories.find(c => c.categoryId === transaction.categoryId);
+                    const toAccount = accounts.find(a => a.accountId === transaction.toAccountId);
+                    
+                    return (
                       <Box
                         key={transaction.transactionId}
                         sx={{
                           display: 'flex',
+                          flexDirection: { xs: 'column', sm: 'row' },
                           justifyContent: 'space-between',
-                          alignItems: 'center',
-                          p: 2,
+                          alignItems: { xs: 'flex-start', sm: 'center' },
+                          p: { xs: 1.5, sm: 2 },
+                          gap: { xs: 1, sm: 2 },
                           borderRadius: 2,
-                          bgcolor: 'background.subtle',
-                          transition: 'all 0.2s',
-                          '&:hover': {
-                            bgcolor: 'background.default',
-                            boxShadow: theme.shadows[1]
+                          bgcolor: 'background.paper',
+                          boxShadow: 1,
+                          position: 'relative',
+                          '&:hover, &:focus-within': {
+                            bgcolor: 'action.hover',
+                            cursor: 'pointer',
+                            '& .action-buttons': {
+                              opacity: 1,
+                              visibility: 'visible',
+                            }
                           }
                         }}
+                        onClick={() => handleEditTransaction(transaction)}
                       >
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
                           <Box
                             sx={{
                               width: 40,
@@ -585,73 +607,182 @@ const Transactions = () => {
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              bgcolor: transaction.type === 'income' ? 'success.light' :
-                                      transaction.type === 'expense' ? 'error.light' :
-                                      'primary.light',
-                              color: transaction.type === 'income' ? 'success.main' :
-                                     transaction.type === 'expense' ? 'error.main' :
-                                     'primary.main'
+                              bgcolor: transaction.type === 'income' ? 'success.soft' :
+                                      transaction.type === 'expense' ? 'error.soft' :
+                                      'info.soft'
                             }}
                           >
-                            {transaction.type === 'income' ? '↑' :
-                             transaction.type === 'expense' ? '↓' : '↔'}
+                            {getTransactionIcon(transaction.type)}
                           </Box>
-                          <Box>
-                            <Typography variant="subtitle1">
+                          
+                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Typography variant="subtitle1" noWrap sx={{ fontWeight: 500 }}>
                               {transaction.description}
                             </Typography>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                               <Typography variant="caption" color="text.secondary">
-                                {dayjs(transaction.date).format('MMM D, YYYY')}
+                                {dayjs(transaction.date).format('MMM DD, YYYY')}
                               </Typography>
-                              <Typography variant="caption" color="text.secondary">•</Typography>
+                              <Box
+                                component="span"
+                                sx={{
+                                  width: 4,
+                                  height: 4,
+                                  borderRadius: '50%',
+                                  bgcolor: 'text.disabled'
+                                }}
+                              />
                               <Typography variant="caption" color="text.secondary">
-                                {accounts.find(a => a.accountId === transaction.accountId)?.name}
+                                {account?.name}
                               </Typography>
-                              {transaction.type !== 'transfer' && (
+                              {transaction.type === 'transfer' && toAccount && (
                                 <>
-                                  <Typography variant="caption" color="text.secondary">•</Typography>
+                                  <ArrowForward sx={{ fontSize: 12, color: 'text.disabled' }} />
                                   <Typography variant="caption" color="text.secondary">
-                                    {categories.find(c => c.categoryId === transaction.categoryId)?.name}
+                                    {toAccount.name}
+                                  </Typography>
+                                </>
+                              )}
+                              {category && (
+                                <>
+                                  <Box
+                                    component="span"
+                                    sx={{
+                                      width: 4,
+                                      height: 4,
+                                      borderRadius: '50%',
+                                      bgcolor: 'text.disabled'
+                                    }}
+                                  />
+                                  <Typography variant="caption" color="text.secondary">
+                                    {category.name}
                                   </Typography>
                                 </>
                               )}
                             </Box>
                           </Box>
                         </Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          {renderTransactionAmount(transaction)}
+
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: 2, 
+                          ml: 2 
+                        }}>
+                          {/* Amount and Type Column */}
                           <Box sx={{ 
-                            opacity: 0,
-                            transition: 'opacity 0.2s',
-                            '.MuiBox-root:hover > &': {
-                              opacity: 1
-                            }
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            alignItems: 'flex-end'
                           }}>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleEditTransaction(transaction)}
-                              sx={{ mr: 1 }}
+                            <Typography
+                              variant="subtitle1"
+                              sx={{
+                                color: transaction.type === 'income' ? 'success.main' :
+                                       transaction.type === 'expense' ? 'error.main' :
+                                       'info.main',
+                                fontWeight: 500
+                              }}
                             >
-                              <EditIcon fontSize="small" />
+                              {transaction.type === 'income' ? '+' : 
+                               transaction.type === 'expense' ? '-' : ''}
+                              {formatCurrency(Math.abs(transaction.amount))}
+                            </Typography>
+                            <Chip
+                              label={transaction.type === 'transfer' ? 'Transfer' : 
+                                     transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1)}
+                              size="small"
+                              sx={{
+                                mt: 0.5,
+                                bgcolor: transaction.type === 'income' ? 'success.soft' :
+                                        transaction.type === 'expense' ? 'error.soft' :
+                                        'info.soft',
+                                color: transaction.type === 'income' ? 'success.main' :
+                                       transaction.type === 'expense' ? 'error.main' :
+                                       'info.main'
+                              }}
+                            />
+                          </Box>
+
+                          {/* Action Buttons */}
+                          <Box 
+                            className="action-buttons"
+                            sx={{
+                              display: 'flex',
+                              gap: 1,
+                              opacity: 0,
+                              visibility: 'hidden',
+                              transition: 'all 0.2s ease-in-out',
+                              ml: 2
+                            }}
+                          >
+                            <IconButton
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditTransaction(transaction);
+                              }}
+                              size="small"
+                              component="span"
+                            >
+                              <EditIcon />
                             </IconButton>
                             <IconButton
-                              size="small"
                               color="error"
-                              onClick={() => handleDeleteTransaction(transaction)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteClick(transaction);
+                              }}
+                              size="small"
+                              component="span"
                             >
-                              <DeleteIcon fontSize="small" />
+                              <DeleteIcon />
                             </IconButton>
                           </Box>
                         </Box>
                       </Box>
-                    ))}
-                  </Stack>
-                )}
+                    );
+                  })}
+                </Stack>
               </CardContent>
             </Card>
           </Grid>
         </Grid>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog
+          open={deleteDialog}
+          onClose={() => setDeleteDialog(false)}
+        >
+          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogContent>
+            <Typography>
+              Are you sure you want to delete this transaction? This action cannot be undone.
+            </Typography>
+            {transactionToDelete && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" color="text.secondary">
+                  {`${transactionToDelete.type.charAt(0).toUpperCase() + transactionToDelete.type.slice(1)}`}
+                </Typography>
+                <Typography>
+                  {formatCurrency(Math.abs(transactionToDelete.amount))}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {dayjs(transactionToDelete.date).format('MMM D, YYYY')}
+                </Typography>
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeleteDialog(false)}>Cancel</Button>
+            <Button 
+              onClick={handleConfirmDelete} 
+              color="error" 
+              variant="contained"
+            >
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     </LocalizationProvider>
   );

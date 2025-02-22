@@ -1,21 +1,23 @@
 import DatabaseService from './DatabaseService';
 import dayjs from 'dayjs';
+import CryptoJS from 'crypto-js';
 
 class BackupService {
-  // Define backup formats and extensions
+  static ENCRYPTION_KEY = 'ExpenseGo-Secure-Key-2024';
+  
   static BACKUP_FORMATS = {
     DEFAULT: {
-      extension: 'backup',
+      extension: 'egbackup',
       mime: 'application/octet-stream',
       description: 'ExpenseGo Backup'
     },
     ENCRYPTED: {
-      extension: 'secure',
+      extension: 'egsecure',
       mime: 'application/octet-stream',
       description: 'ExpenseGo Encrypted Backup'
     },
     PORTABLE: {
-      extension: 'export',
+      extension: 'egexport',
       mime: 'application/json',
       description: 'ExpenseGo Portable Export'
     }
@@ -30,158 +32,273 @@ class BackupService {
   static async createBackup(format = 'DEFAULT', retryCount = this.PRODUCTION_CONFIG.maxRetries) {
     try {
       const backup = await this.prepareBackup();
-      const blob = await this.compressBackup(backup);
+      const backupString = JSON.stringify(backup);
+      
+      let processedData;
+      let fileExtension;
+      
+      // Validate format
+      if (!this.BACKUP_FORMATS[format]) {
+        format = 'DEFAULT'; // Fallback to DEFAULT if invalid format provided
+      }
+      
+      if (format === 'ENCRYPTED') {
+        processedData = this.encryptData(backupString);
+        fileExtension = this.BACKUP_FORMATS.ENCRYPTED.extension;
+      } else {
+        processedData = backupString;
+        fileExtension = this.BACKUP_FORMATS[format].extension;
+      }
+
+      const blob = new Blob([processedData], {
+        type: this.BACKUP_FORMATS[format].mime
+      });
       
       if (blob.size > this.PRODUCTION_CONFIG.maxBackupSize) {
         throw new Error('Backup size exceeds limit');
       }
 
-      await this.downloadBackup(blob, format);
+      const timestamp = dayjs().format('YYYY-MM-DD_HH-mm');
+      const fileName = `ExpenseGo_Backup_${timestamp}.${fileExtension}`;
+
+      return {
+        blob,
+        fileName,
+        format
+      };
+    } catch (error) {
+      if (retryCount > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return this.createBackup(format, retryCount - 1);
+      }
+      throw new Error(`Backup failed: ${error.message}`);
+    }
+  }
+
+  static async restoreBackup(file, retryCount = this.PRODUCTION_CONFIG.maxRetries) {
+    try {
+      const fileContent = await this.readFileContent(file);
+      let backupData;
+
+      const isEncrypted = file.name.endsWith(this.BACKUP_FORMATS.ENCRYPTED.extension);
+
+      try {
+        if (isEncrypted) {
+          const decryptedData = this.decryptData(fileContent);
+          backupData = JSON.parse(decryptedData);
+        } else {
+          backupData = JSON.parse(fileContent);
+        }
+      } catch (error) {
+        throw new Error('Invalid backup file format or corrupted data');
+      }
+
+      if (!this.validateBackupData(backupData)) {
+        throw new Error('Invalid backup data structure');
+      }
+
+      await this.restoreData(backupData);
+
       return true;
     } catch (error) {
       if (retryCount > 0) {
-        return this.createBackup(format, retryCount - 1);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return this.restoreBackup(file, retryCount - 1);
       }
-      throw new Error('Backup creation failed after multiple attempts');
+      throw new Error(`Restore failed: ${error.message}`);
     }
   }
 
-  static async compressBackup(backup) {
-    // Add compression logic here
-    return new Blob([JSON.stringify(backup)], { type: 'application/json' });
-  }
-
-  static async downloadBackup(blob, format) {
-    const url = URL.createObjectURL(blob);
+  static encryptData(data) {
     try {
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `ExpenseGo_${dayjs().format('YYYY-MM-DD')}.${format}`;
-      document.body.appendChild(link);
-      link.click();
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  static async restoreBackup(file) {
-    try {
-      const backup = await this.readBackupFile(file);
-      
-      if (!this.validateBackup(backup)) {
-        throw new Error('Invalid backup file');
-      }
-
-      await DatabaseService.initializeDatabase();
-      
-      const bankId = 1;
-      const year = new Date().getFullYear();
-
-      await DatabaseService.createBankYearTables(bankId, year);
-
-      // Restore accounts with duplicate checking
-      if (backup.data.accounts && Array.isArray(backup.data.accounts)) {
-        for (const account of backup.data.accounts) {
-          // Check if account already exists
-          const exists = await DatabaseService.db.exec(`
-            SELECT account_id FROM accounts_${bankId}_${year}
-            WHERE name = ?
-          `, [account.name]);
-
-          if (!exists[0]?.values?.length) {
-            await DatabaseService.addAccount(bankId, year, {
-              ...account,
-              is_default: account.isDefault || 0
-            });
-          }
-        }
-      }
-
-      // Ensure default accounts exist
-      await DatabaseService.createDefaultAccounts(bankId, year);
-
-      // Rest of restoration process
-      if (backup.data.categories && Array.isArray(backup.data.categories)) {
-        for (const category of backup.data.categories) {
-          await DatabaseService.addCategory(bankId, year, category);
-        }
-      }
-
-      if (backup.data.transactions && Array.isArray(backup.data.transactions)) {
-        for (const transaction of backup.data.transactions) {
-          await DatabaseService.addTransaction(bankId, year, transaction);
-        }
-      }
-
-      // Save all changes to IndexedDB
-      await DatabaseService.saveToIndexedDB();
-
-      return true;
+      return CryptoJS.AES.encrypt(data, this.ENCRYPTION_KEY).toString();
     } catch (error) {
-      throw error;
+      throw new Error('Encryption failed');
     }
   }
 
-  static async readBackupFile(file) {
-    // Validate file extension
-    const extension = file.name.split('.').pop().toLowerCase();
-    const isValidExtension = Object.values(this.BACKUP_FORMATS)
-      .some(format => format.extension === extension);
-
-    if (!isValidExtension) {
-      throw new Error('Invalid backup file type');
+  static decryptData(encryptedData) {
+    try {
+      const bytes = CryptoJS.AES.decrypt(encryptedData, this.ENCRYPTION_KEY);
+      return bytes.toString(CryptoJS.enc.Utf8);
+    } catch (error) {
+      throw new Error('Decryption failed - Invalid backup file or corrupted data');
     }
+  }
 
+  static async readFileContent(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const backup = JSON.parse(e.target.result);
-          resolve(backup);
-        } catch (error) {
-          reject(new Error('Invalid backup file format'));
-        }
-      };
-      reader.onerror = () => reject(new Error('Error reading backup file'));
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = (e) => reject(new Error('File reading failed'));
       reader.readAsText(file);
     });
   }
 
-  static validateBackup(backup) {
-    // Check version compatibility
-    const currentVersion = '1.0';
-    const backupVersion = backup.version;
+  static validateBackupData(data) {
+    const requiredFields = ['version', 'timestamp', 'data'];
+    const requiredDataFields = ['schema', 'accounts', 'categories', 'transactions'];
     
-    if (!this.isVersionCompatible(currentVersion, backupVersion)) {
-      throw new Error(`Incompatible backup version. Expected ${currentVersion}, got ${backupVersion}`);
-    }
-
-    // Check version and required fields
-    if (!backup.version || !backup.timestamp || !backup.data) {
-      return false;
-    }
-
-    // Validate format if present
-    if (backup.format && !this.BACKUP_FORMATS[backup.format]) {
-      return false;
-    }
-
-    // Check required data structures
-    if (!backup.data.accounts || !backup.data.categories || !backup.data.transactions) {
-      return false;
-    }
-
-    return true;
+    return (
+      requiredFields.every(field => data.hasOwnProperty(field)) &&
+      requiredDataFields.every(field => data.data.hasOwnProperty(field))
+    );
   }
 
-  static isVersionCompatible(currentVersion, backupVersion) {
-    const [currentMajor] = currentVersion.split('.');
-    const [backupMajor] = backupVersion.split('.');
-    return currentMajor === backupMajor;
+  static async restoreData(backupData) {
+      await DatabaseService.initializeDatabase();
+    await DatabaseService.beginTransaction();
+      
+    try {
+      const year = new Date().getFullYear();
+      const bankId = 1; // Default bank ID
+
+      // Drop existing tables and create fresh ones
+      const bankTables = await DatabaseService.db.exec(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND 
+        (name LIKE 'accounts_${bankId}_%' OR 
+         name LIKE 'categories_${bankId}_%' OR 
+         name LIKE 'transactions_${bankId}_%')
+      `);
+
+      if (bankTables[0]?.values) {
+        for (const [tableName] of bankTables[0].values) {
+          await DatabaseService.db.exec(`DROP TABLE IF EXISTS "${tableName}"`);
+        }
+      }
+
+      await DatabaseService.createBankYearTables(bankId, year);
+
+      // Create a map to store account ID mappings and initial balances
+      const accountIdMap = new Map();
+      const accountBalances = new Map();
+
+      // First pass: Create/Update accounts with zero balance
+      for (const account of backupData.data.accounts) {
+        const existingAccount = await DatabaseService.db.exec(`
+          SELECT account_id, is_default 
+          FROM accounts_${bankId}_${year}
+            WHERE name = ?
+          `, [account.name]);
+
+        if (existingAccount[0]?.values?.length > 0) {
+          const [existingId, isDefault] = existingAccount[0].values[0];
+          accountIdMap.set(account.accountId, existingId);
+          
+          if (!isDefault) {
+            // Set initial balance to 0, we'll update it after processing transactions
+            await DatabaseService.db.exec(`
+              UPDATE accounts_${bankId}_${year}
+              SET current_balance = 0,
+                  initial_balance = 0,
+                  type = ?,
+                  currency = ?,
+                  color_code = ?,
+                  icon = ?,
+                  notes = ?
+              WHERE account_id = ?
+            `, [
+              account.type,
+              account.currency,
+              account.colorCode || account.color,
+              account.icon,
+              account.notes,
+              existingId
+            ]);
+          }
+          accountBalances.set(existingId, 0);
+        } else {
+          const accountData = {
+            ...account,
+            bankId: bankId,
+            year: year,
+            initialBalance: 0,
+            currentBalance: 0
+          };
+          const newId = await DatabaseService.addAccount(bankId, year, accountData);
+          accountIdMap.set(account.accountId, newId);
+          accountBalances.set(newId, 0);
+        }
+      }
+
+      // Restore categories
+      for (const category of backupData.data.categories) {
+        const categoryData = {
+          ...category,
+          bankId: bankId,
+          year: year
+        };
+        await DatabaseService.addCategory(bankId, year, categoryData);
+      }
+
+      // Restore transactions and update balances
+      for (const transaction of backupData.data.transactions) {
+        const newAccountId = accountIdMap.get(transaction.accountId);
+        const newToAccountId = transaction.toAccountId ? accountIdMap.get(transaction.toAccountId) : null;
+
+        const transactionData = {
+          ...transaction,
+          bankId: bankId,
+          year: year,
+          accountId: newAccountId,
+          toAccountId: newToAccountId
+        };
+
+        // Update balances based on transaction type
+        const amount = Number(transaction.amount);
+        if (transaction.type === 'expense') {
+          accountBalances.set(newAccountId, accountBalances.get(newAccountId) - Math.abs(amount));
+        } else if (transaction.type === 'income') {
+          accountBalances.set(newAccountId, accountBalances.get(newAccountId) + Math.abs(amount));
+        } else if (transaction.type === 'transfer' && newToAccountId) {
+          accountBalances.set(newAccountId, accountBalances.get(newAccountId) - Math.abs(amount));
+          accountBalances.set(newToAccountId, accountBalances.get(newToAccountId) + Math.abs(amount));
+        }
+
+        await DatabaseService.db.exec(`
+          INSERT INTO transactions_${bankId}_${year} (
+            transaction_id, type, amount, date, account_id, to_account_id, category_id,
+            description, payment_method, location, notes, tags, attachments,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          transactionData.transactionId,
+          transactionData.type,
+          amount,
+          transactionData.date,
+          newAccountId,
+          newToAccountId,
+          transactionData.categoryId,
+          transactionData.description || '',
+          transactionData.paymentMethod || 'cash',
+          transactionData.location || '',
+          transactionData.notes || '',
+          JSON.stringify(transactionData.tags || []),
+          JSON.stringify(transactionData.attachments || []),
+          transactionData.createdAt || new Date().toISOString(),
+          transactionData.updatedAt || new Date().toISOString()
+        ]);
+      }
+
+      // Finally, update account balances
+      for (const [accountId, balance] of accountBalances) {
+        await DatabaseService.db.exec(`
+          UPDATE accounts_${bankId}_${year}
+          SET current_balance = ?
+          WHERE account_id = ?
+        `, [balance, accountId]);
+      }
+
+      await DatabaseService.commitTransaction();
+      await DatabaseService.saveToIndexedDB();
+    } catch (error) {
+      await DatabaseService.rollbackTransaction();
+      throw error;
+    }
   }
 
   static async getSchema() {
-    // Get current database schema
     const tables = await DatabaseService.db.exec(`
       SELECT sql FROM sqlite_master 
       WHERE type='table' AND name NOT LIKE 'sqlite_%'
@@ -194,18 +311,12 @@ class BackupService {
     const bankId = 1; // TODO: Get from context
     const year = new Date().getFullYear();
 
-    // Get all data
-    const [
-      accounts,
-      categories,
-      transactions
-    ] = await Promise.all([
+    const [accounts, categories, transactions] = await Promise.all([
       DatabaseService.getAccounts(bankId, year),
       DatabaseService.getCategories(bankId, year),
       DatabaseService.getTransactions(bankId, year)
     ]);
 
-    // Create backup object
     return {
       version: '1.0',
       timestamp: new Date().toISOString(),
@@ -216,6 +327,32 @@ class BackupService {
         transactions
       }
     };
+  }
+
+  static async downloadBackup(format = 'DEFAULT') {
+    try {
+      // Validate format
+      if (!this.BACKUP_FORMATS[format]) {
+        format = 'DEFAULT';
+      }
+
+      const { blob, fileName } = await this.createBackup(format);
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      
+      document.body.appendChild(link);
+      link.click();
+      
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      return true;
+    } catch (error) {
+      throw new Error(`Download failed: ${error.message}`);
+    }
   }
 }
 

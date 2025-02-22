@@ -50,8 +50,18 @@ const getTheme = (mode) => ({
       fontWeight: 600
     },
     h4: {
-      fontSize: '1.125rem',
+      fontSize: {
+        xs: '1.5rem',
+        sm: '2rem'
+      },
       fontWeight: 600
+    },
+    h6: {
+      fontSize: {
+        xs: '1.1rem',
+        sm: '1.25rem'
+      },
+      fontWeight: 500
     },
     body1: {
       fontSize: '1rem'
@@ -70,7 +80,11 @@ const getTheme = (mode) => ({
           borderRadius: 16,
           boxShadow: mode === 'dark' 
             ? '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
-            : '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+            : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          transition: 'box-shadow 0.3s ease-in-out',
+          '&:hover': {
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+          }
         }
       }
     },
@@ -89,6 +103,17 @@ const getTheme = (mode) => ({
           borderRadius: 16,
           backgroundImage: 'none'
         }
+      }
+    },
+    MuiAppBar: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+          transition: 'all 0.2s ease-in-out'
+        }
+      },
+      defaultProps: {
+        elevation: 0
       }
     }
   }

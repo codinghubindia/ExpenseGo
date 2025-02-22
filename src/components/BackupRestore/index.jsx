@@ -10,6 +10,7 @@ import {
   Alert,
   CircularProgress,
   FormControl,
+  InputLabel,
   Select,
   MenuItem,
   Stack
@@ -22,11 +23,15 @@ import BackupService from '../../services/BackupService';
 import DatabaseService from '../../services/DatabaseService';
 
 const BackupRestore = () => {
+  const [format, setFormat] = useState('DEFAULT');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [format, setFormat] = useState('DEFAULT');
+
+  const handleFormatChange = (event) => {
+    setFormat(event.target.value);
+  };
 
   const getAcceptedFileTypes = () => {
     return Object.values(BackupService.BACKUP_FORMATS)
@@ -38,10 +43,10 @@ const BackupRestore = () => {
     try {
       setLoading(true);
       setError(null);
-      await BackupService.createBackup(format);
-      setSuccess('Backup created successfully!');
-    } catch (error) {
-      setError('Failed to create backup: ' + error.message);
+      await BackupService.downloadBackup(format);
+      setSuccess('Backup created and downloaded successfully');
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -108,43 +113,42 @@ const BackupRestore = () => {
             </Alert>
           )}
           
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, my: 2 }}>
-            <Box>
-              <Typography variant="subtitle1" gutterBottom>
-                Backup Your Data
-              </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
-                Download a backup file containing all your financial data.
-              </Typography>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <FormControl size="small" sx={{ minWidth: 120 }}>
-                  <Select
-                    value={format}
-                    onChange={(e) => setFormat(e.target.value)}
-                  >
-                    {Object.entries(BackupService.BACKUP_FORMATS).map(([key, value]) => (
-                      <MenuItem key={key} value={key}>
-                        {value.description}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <Button
-                  variant="contained"
-                  startIcon={<BackupIcon />}
-                  onClick={handleBackup}
-                  disabled={loading}
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" gutterBottom>
+              Backup
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <FormControl fullWidth>
+                <InputLabel>Backup Format</InputLabel>
+                <Select
+                  value={format}
+                  onChange={handleFormatChange}
+                  label="Backup Format"
                 >
-                  Create Backup
-                </Button>
-              </Stack>
+                  {Object.entries(BackupService.BACKUP_FORMATS).map(([key, value]) => (
+                    <MenuItem key={key} value={key}>
+                      {value.description}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Button
+                variant="contained"
+                onClick={handleBackup}
+                startIcon={<BackupIcon />}
+                disabled={loading}
+              >
+                Create Backup
+              </Button>
             </Box>
+          </Box>
 
-            <Box>
-              <Typography variant="subtitle1" gutterBottom>
-                Restore Data
-              </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
+          <Box>
+            <Typography variant="h6" gutterBottom>
+              Restore
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Typography variant="body2" color="text.secondary">
                 Restore your data from a previous backup file.
                 Supported formats: {Object.values(BackupService.BACKUP_FORMATS)
                   .map(format => format.description)

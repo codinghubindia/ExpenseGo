@@ -16,7 +16,9 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  CircularProgress
+  CircularProgress,
+  Grid,
+  Stack
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -203,58 +205,65 @@ const Categories = () => {
             </Typography>
           </Box>
         ) : (
-          <List>
-            {categories.map((category) => (
-              <ListItem
-                key={category.categoryId}
-                sx={{
-                  borderLeft: `4px solid ${category.colorCode || category.color || '#000000'}`,
-                  opacity: category.isDefault ? 0.7 : 1
-                }}
-              >
-                <ListItemText
-                  primary={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <span>{category.icon}</span>
-                      <Typography>
-                        {category.name}
-                        {category.isDefault && (
-                          <Typography
-                            component="span"
-                            variant="caption"
-                            sx={{ ml: 1, color: 'text.secondary' }}
-                          >
-                            (Default)
-                          </Typography>
-                        )}
-                      </Typography>
-                    </Box>
-                  }
-                  secondary={category.type}
-                />
-                <ListItemSecondaryAction>
-                  <IconButton
-                    edge="end"
-                    onClick={() => {
-                      setSelectedCategory(category);
-                      setIsFormOpen(true);
+          <Grid container spacing={{ xs: 2, sm: 3 }}>
+            <Grid item xs={12} md={6}>
+              <Typography variant="h6" sx={{ mb: { xs: 1, sm: 2 } }}>
+                Expense Categories
+              </Typography>
+              <Stack spacing={{ xs: 1, sm: 2 }}>
+                {categories.map((category) => (
+                  <ListItem
+                    key={category.categoryId}
+                    sx={{
+                      borderLeft: `4px solid ${category.colorCode || category.color || '#000000'}`,
+                      opacity: category.isDefault ? 0.7 : 1
                     }}
-                    disabled={category.isDefault}
                   >
-                    <EditIcon />
-                  </IconButton>
-                  <IconButton
-                    edge="end"
-                    onClick={() => handleDeleteCategory(category.categoryId)}
-                    disabled={category.isDefault}
-                    sx={{ ml: 1 }}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                </ListItemSecondaryAction>
-              </ListItem>
-            ))}
-          </List>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <span>{category.icon}</span>
+                          <Typography>
+                            {category.name}
+                            {category.isDefault && (
+                              <Typography
+                                component="span"
+                                variant="caption"
+                                sx={{ ml: 1, color: 'text.secondary' }}
+                              >
+                                (Default)
+                              </Typography>
+                            )}
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={category.type}
+                    />
+                    <ListItemSecondaryAction>
+                      <IconButton
+                        edge="end"
+                        onClick={() => {
+                          setSelectedCategory(category);
+                          setIsFormOpen(true);
+                        }}
+                        disabled={category.isDefault}
+                      >
+                        <EditIcon />
+                      </IconButton>
+                      <IconButton
+                        edge="end"
+                        onClick={() => handleDeleteCategory(category.categoryId)}
+                        disabled={category.isDefault}
+                        sx={{ ml: 1 }}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </ListItemSecondaryAction>
+                  </ListItem>
+                ))}
+              </Stack>
+            </Grid>
+          </Grid>
         )}
       </Paper>
 

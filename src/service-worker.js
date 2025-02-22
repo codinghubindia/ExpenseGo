@@ -89,4 +89,15 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open('offline').then((cache) => cache.put('/offline.html', offlinePage))
   );
-}); 
+});
+
+// Add these routes to your workbox configuration
+workbox.routing.registerRoute(
+  new RegExp('/ExpenseGo/#/.*'),
+  new workbox.strategies.NetworkFirst()
+);
+
+workbox.routing.registerRoute(
+  new RegExp('/ExpenseGo/manifest.webmanifest'),
+  new workbox.strategies.NetworkFirst()
+); 

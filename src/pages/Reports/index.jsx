@@ -26,7 +26,9 @@ import {
   useTheme,
   Tooltip,
   Alert,
-  Chip
+  Chip,
+  IconButton,
+  Switch
 } from '@mui/material';
 import {
   PieChart,
@@ -51,12 +53,12 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs from 'dayjs';
 import DatabaseService from '../../services/DatabaseService';
 import {
-  FileDownload as ExportIcon,
   Add as AddIcon,
   ArrowUpward,
   ArrowDownward,
   TrendingUp,
-  TrendingDown
+  TrendingDown,
+  Delete as DeleteIcon
 } from '@mui/icons-material';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -107,25 +109,21 @@ const Reports = () => {
     }))
   });
   const [customReportDialog, setCustomReportDialog] = useState(false);
-  const [exportDialog, setExportDialog] = useState(false);
-  const [exportOptions, setExportOptions] = useState({
-    format: 'csv',
-    includeCharts: true,
-    dateRange: 'current',
-    customStartDate: dayjs(),
-    customEndDate: dayjs(),
-    paperSize: 'a4',
-    orientation: 'portrait'
-  });
   const [customReport, setCustomReport] = useState({
+    enabled: false,
     name: '',
     description: '',
     type: 'expenses',
     groupBy: 'category',
     timeframe: 'month',
+    paperSize: 'A4',
+    orientation: 'PORTRAIT',
+    includeCharts: true,
+    includeSummary: true,
+    headers: [],
     customStartDate: dayjs(),
     customEndDate: dayjs(),
-    includeCharts: true
+    filters: {}
   });
 
   // Add new state for export filters
@@ -164,6 +162,9 @@ const Reports = () => {
 
   // Add error state
   const [error, setError] = useState(null);
+
+  // Add success state at the top with other states
+  const [success, setSuccess] = useState(null);
 
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -486,29 +487,60 @@ const Reports = () => {
   // Update the handleExport function
   const handleExport = async () => {
     try {
-      const transactions = await fetchTransactionsForExport();
+      setLoading(true);
+      setError(null);
+      setSuccess(null);
+      let exportData;
       
-      if (!transactions || transactions.length === 0) {
-        // TODO: Show a notification that no transactions were found
-        console.warn('No transactions found for the selected filters');
-        return;
+      switch (activeTab) {
+        case 0:
+          exportData = reportData.expensesByCategory;
+          break;
+        case 1:
+          exportData = reportData.incomeByCategory;
+          break;
+        case 2:
+          exportData = reportData.cashFlow;
+          break;
+        case 3:
+          exportData = reportData.accountBalances;
+          break;
+        default:
+          throw new Error('Invalid report type');
       }
 
-      let data;
-      if (exportOptions.format === 'pdf') {
-        const doc = await generatePDF(transactions);
-        doc.save(`financial_report_${dayjs().format('YYYY-MM-DD')}.pdf`);
-      } else if (exportOptions.format === 'csv') {
-        data = formatTransactionsToCSV(transactions);
-        downloadFile(data, 'csv');
+      if (customReport.enabled) {
+        await ReportExport.exportCustomReport(exportData, {
+          format: exportFormat,
+          reportType: getReportTitle(),
+          currency,
+          dateRange: { startDate: exportFilters.startDate, endDate: exportFilters.endDate },
+          paperSize: customReport.paperSize,
+          orientation: customReport.orientation,
+          includeCharts: customReport.includeCharts,
+          customHeaders: customReport.headers,
+          customSummary: customReport.includeSummary,
+          filters: customReport.filters,
+          charts: getChartData()
+        });
       } else {
-        data = JSON.stringify(transactions, null, 2);
-        downloadFile(data, 'json');
+        await ReportExport.exportReport(
+          exportData,
+          exportFormat,
+          getReportTitle(),
+          currency,
+          { startDate: exportFilters.startDate, endDate: exportFilters.endDate }
+        );
       }
-      setExportDialog(false);
+      
+      setSuccess('Report exported successfully');
+      setExportDialog(false); // Close the dialog after successful export
+      setTimeout(() => setSuccess(null), 3000); // Clear success message after 3 seconds
     } catch (error) {
-      console.error('Error exporting report:', error);
-      // TODO: Show error notification
+      setError('Failed to export report: ' + error.message);
+    } finally {
+      setLoading(false);
+      setExportFormat('');
     }
   };
 
@@ -1147,6 +1179,23 @@ const Reports = () => {
     );
   };
 
+  // Add this function near the top of the component
+  const getReportTitle = () => {
+    switch (activeTab) {
+      case 0:
+        return 'Expense Analysis';
+      case 1:
+        return 'Income Analysis';
+      case 2:
+        return 'Cash Flow';
+      case 3:
+        return 'Account Distribution';
+      default:
+        return 'Financial Report';
+    }
+  };
+
+  // Update the export dialog with more customization options
   const renderExportDialog = () => (
     <Dialog 
       open={exportDialog} 
@@ -1154,268 +1203,186 @@ const Reports = () => {
       maxWidth="md"
       fullWidth
     >
-      <DialogTitle>Export Transactions</DialogTitle>
+      <DialogTitle>
+        <Typography variant="h6">Export {getReportTitle()}</Typography>
+      </DialogTitle>
       <DialogContent>
         <LocalizationProvider dateAdapter={AdapterDayjs}>
-          <Grid container spacing={2}>
+          <Grid container spacing={3}>
+            {/* Basic Export Settings */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
+                Export Settings
+              </Typography>
+            </Grid>
+
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Format</InputLabel>
+              <FormControl fullWidth>
+                <InputLabel>Export Format</InputLabel>
                 <Select
-                  value={exportOptions.format}
-                  onChange={(e) => setExportOptions({ ...exportOptions, format: e.target.value })}
+                  value={exportFormat}
+                  onChange={(e) => setExportFormat(e.target.value)}
                 >
-                  <MenuItem value="csv">CSV</MenuItem>
-                  <MenuItem value="json">JSON</MenuItem>
-                  <MenuItem value="pdf">PDF</MenuItem>
+                  <MenuItem value={ReportExport.FORMATS.PDF}>PDF Document</MenuItem>
+                  <MenuItem value={ReportExport.FORMATS.EXCEL}>Excel Spreadsheet</MenuItem>
+                  <MenuItem value={ReportExport.FORMATS.CSV}>CSV File</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
 
-            {exportOptions.format === 'pdf' && (
+            {exportFormat === ReportExport.FORMATS.PDF && (
               <>
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth margin="normal">
+                  <FormControl fullWidth>
                     <InputLabel>Paper Size</InputLabel>
                     <Select
-                      value={exportOptions.paperSize}
-                      onChange={(e) => setExportOptions({ ...exportOptions, paperSize: e.target.value })}
+                      value={customReport.paperSize}
+                      onChange={(e) => setCustomReport(prev => ({ ...prev, paperSize: e.target.value }))}
                     >
-                      <MenuItem value="a4">A4</MenuItem>
-                      <MenuItem value="letter">Letter</MenuItem>
-                      <MenuItem value="legal">Legal</MenuItem>
+                      <MenuItem value="A4">A4</MenuItem>
+                      <MenuItem value="LETTER">Letter</MenuItem>
+                      <MenuItem value="LEGAL">Legal</MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth margin="normal">
+                  <FormControl fullWidth>
                     <InputLabel>Orientation</InputLabel>
                     <Select
-                      value={exportOptions.orientation}
-                      onChange={(e) => setExportOptions({ ...exportOptions, orientation: e.target.value })}
+                      value={customReport.orientation}
+                      onChange={(e) => setCustomReport(prev => ({ ...prev, orientation: e.target.value }))}
                     >
-                      <MenuItem value="portrait">Portrait</MenuItem>
-                      <MenuItem value="landscape">Landscape</MenuItem>
+                      <MenuItem value="PORTRAIT">Portrait</MenuItem>
+                      <MenuItem value="LANDSCAPE">Landscape</MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
               </>
             )}
 
+            {/* Date Range Selection */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
+                Date Range
+              </Typography>
+            </Grid>
+
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Date Range</InputLabel>
-                <Select
-                  value={exportOptions.dateRange}
-                  onChange={(e) => {
-                    const newValue = e.target.value;
-                    setExportOptions(prev => ({ ...prev, dateRange: newValue }));
-                    
-                    // Update export filters based on selected date range
-                    if (newValue !== 'custom') {
-                      let startDate, endDate;
-                      switch (newValue) {
-                        case 'week':
-                          startDate = dayjs().subtract(7, 'day');
-                          endDate = dayjs();
-                          break;
-                        case 'month':
-                          startDate = dayjs().startOf('month');
-                          endDate = dayjs().endOf('month');
-                          break;
-                        case 'year':
-                          startDate = dayjs().startOf('year');
-                          endDate = dayjs().endOf('year');
-                          break;
-                        default:
-                          startDate = dayjs().startOf('month');
-                          endDate = dayjs().endOf('month');
-                      }
-                      setExportFilters(prev => ({
+              <DatePicker
+                label="Start Date"
+                value={exportFilters.startDate}
+                onChange={(newDate) => setExportFilters(prev => ({ ...prev, startDate: newDate }))}
+                slotProps={{ textField: { fullWidth: true } }}
+              />
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <DatePicker
+                label="End Date"
+                value={exportFilters.endDate}
+                onChange={(newDate) => setExportFilters(prev => ({ ...prev, endDate: newDate }))}
+                slotProps={{ textField: { fullWidth: true } }}
+              />
+            </Grid>
+
+            {/* Additional Options */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
+                Additional Options
+              </Typography>
+            </Grid>
+
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={customReport.includeCharts}
+                    onChange={(e) => setCustomReport(prev => ({ 
+                      ...prev, 
+                      includeCharts: e.target.checked 
+                    }))}
+                  />
+                }
+                label="Include Charts"
+              />
+            </Grid>
+
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={customReport.includeSummary}
+                    onChange={(e) => setCustomReport(prev => ({ 
+                      ...prev, 
+                      includeSummary: e.target.checked 
+                    }))}
+                  />
+                }
+                label="Include Summary"
+              />
+            </Grid>
+
+            {/* Custom Headers */}
+            {customReport.enabled && (
+              <Grid item xs={12}>
+                <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
+                  Custom Headers
+                </Typography>
+                <Box sx={{ mt: 1 }}>
+                  {customReport.headers.map((header, index) => (
+                    <Box key={index} sx={{ display: 'flex', gap: 2, mb: 2 }}>
+                      <TextField
+                        label="Header Label"
+                        value={header.label}
+                        onChange={(e) => {
+                          const newHeaders = [...customReport.headers];
+                          newHeaders[index].label = e.target.value;
+                          setCustomReport(prev => ({ ...prev, headers: newHeaders }));
+                        }}
+                        fullWidth
+                      />
+                      <IconButton 
+                        onClick={() => {
+                          const newHeaders = customReport.headers.filter((_, i) => i !== index);
+                          setCustomReport(prev => ({ ...prev, headers: newHeaders }));
+                        }}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </Box>
+                  ))}
+                  <Button
+                    startIcon={<AddIcon />}
+                    onClick={() => {
+                      setCustomReport(prev => ({
                         ...prev,
-                        startDate,
-                        endDate
+                        headers: [...prev.headers, { label: '', key: '', type: 'text' }]
                       }));
-                    }
-                  }}
-                >
-                  <MenuItem value="current">Current Period</MenuItem>
-                  <MenuItem value="custom">Custom Range</MenuItem>
-                  <MenuItem value="all">All Time</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {exportOptions.dateRange === 'custom' && (
-              <>
-                <Grid item xs={12} md={6}>
-                  <DatePicker
-                    label="Start Date"
-                    value={exportFilters.startDate}
-                    onChange={(newDate) => {
-                      if (newDate && newDate.isValid()) {
-                        setExportFilters(prev => ({
-                          ...prev,
-                          startDate: newDate
-                        }));
-                      }
                     }}
-                    slotProps={{ 
-                      textField: { 
-                        fullWidth: true, 
-                        margin: 'normal',
-                        error: !exportFilters.startDate?.isValid()
-                      } 
-                    }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <DatePicker
-                    label="End Date"
-                    value={exportFilters.endDate}
-                    onChange={(newDate) => {
-                      if (newDate && newDate.isValid()) {
-                        setExportFilters(prev => ({
-                          ...prev,
-                          endDate: newDate
-                        }));
-                      }
-                    }}
-                    slotProps={{ 
-                      textField: { 
-                        fullWidth: true, 
-                        margin: 'normal',
-                        error: !exportFilters.endDate?.isValid()
-                      } 
-                    }}
-                    minDate={exportFilters.startDate}
-                  />
-                </Grid>
-              </>
+                  >
+                    Add Header
+                  </Button>
+                </Box>
+              </Grid>
             )}
-
-            <Grid item xs={12}>
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Accounts</InputLabel>
-                <Select
-                  multiple
-                  value={exportFilters.accounts}
-                  onChange={(e) => setExportFilters({ ...exportFilters, accounts: e.target.value })}
-                  renderValue={(selected) => {
-                    if (selected.length === availableAccounts.length) return 'All Accounts';
-                    const selectedAccounts = availableAccounts
-                      .filter(acc => selected.includes(acc.accountId))
-                      .map(acc => acc.name)
-                      .join(', ');
-                    return selectedAccounts || 'No Accounts Selected';
-                  }}
-                >
-                  <MenuItem>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={exportFilters.accounts.length === availableAccounts.length}
-                          indeterminate={
-                            exportFilters.accounts.length > 0 &&
-                            exportFilters.accounts.length < availableAccounts.length
-                          }
-                          onChange={handleSelectAllAccounts}
-                        />
-                      }
-                      label="Select All"
-                    />
-                  </MenuItem>
-                  <Divider />
-                  {availableAccounts.map((account) => (
-                    <MenuItem key={account.accountId} value={account.accountId}>
-                      <Checkbox checked={exportFilters.accounts.includes(account.accountId)} />
-                      {account.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12}>
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Categories</InputLabel>
-                <Select
-                  multiple
-                  value={exportFilters.categories}
-                  onChange={(e) => setExportFilters({ ...exportFilters, categories: e.target.value })}
-                  renderValue={(selected) => {
-                    if (selected.length === availableCategories.length) return 'All Categories';
-                    const selectedCategories = availableCategories
-                      .filter(cat => selected.includes(cat.categoryId))
-                      .map(cat => cat.name)
-                      .join(', ');
-                    return selectedCategories || 'No Categories Selected';
-                  }}
-                >
-                  <MenuItem>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={exportFilters.categories.length === availableCategories.length}
-                          indeterminate={
-                            exportFilters.categories.length > 0 &&
-                            exportFilters.categories.length < availableCategories.length
-                          }
-                          onChange={handleSelectAllCategories}
-                        />
-                      }
-                      label="Select All"
-                    />
-                  </MenuItem>
-                  <Divider />
-                  {availableCategories.map((category) => (
-                    <MenuItem key={category.categoryId} value={category.categoryId}>
-                      <Checkbox checked={exportFilters.categories.includes(category.categoryId)} />
-                      {category.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12}>
-              <FormControl fullWidth margin="normal">
-                <InputLabel>Transaction Types</InputLabel>
-                <Select
-                  multiple
-                  value={exportFilters.transactionTypes}
-                  onChange={(e) => setExportFilters({ ...exportFilters, transactionTypes: e.target.value })}
-                >
-                  <MenuItem value="expense">
-                    <Checkbox checked={exportFilters.transactionTypes.includes('expense')} />
-                    Expenses
-                  </MenuItem>
-                  <MenuItem value="income">
-                    <Checkbox checked={exportFilters.transactionTypes.includes('income')} />
-                    Income
-                  </MenuItem>
-                  <MenuItem value="transfer">
-                    <Checkbox checked={exportFilters.transactionTypes.includes('transfer')} />
-                    Transfers
-                  </MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
           </Grid>
         </LocalizationProvider>
       </DialogContent>
       <DialogActions>
-        <Button 
-          onClick={() => setExportDialog(false)}
-          sx={buttonHoverStyles}
-        >
-          Cancel
-        </Button>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={customReport.enabled}
+              onChange={(e) => setCustomReport(prev => ({ ...prev, enabled: e.target.checked }))}
+            />
+          }
+          label="Advanced Options"
+        />
+        <Button onClick={() => setExportDialog(false)}>Cancel</Button>
         <Button 
           onClick={handleExport} 
-          variant="contained" 
-          color="primary"
-          sx={buttonHoverStyles}
+          variant="contained"
+          disabled={!exportFormat}
         >
           Export
         </Button>
@@ -1636,6 +1603,11 @@ const Reports = () => {
           {error}
         </Alert>
       )}
+      {success && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+          {success}
+        </Alert>
+      )}
       
       <Box sx={{ mb: 3 }}>
         <Typography variant="h4" gutterBottom>
@@ -1665,14 +1637,6 @@ const Reports = () => {
                 sx={buttonHoverStyles}
               >
                 Custom Report
-              </Button>
-              <Button
-                variant="contained"
-                startIcon={<ExportIcon />}
-                onClick={() => setExportDialog(true)}
-                sx={buttonHoverStyles}
-              >
-                Export
               </Button>
             </Box>
           </Grid>
@@ -1788,7 +1752,6 @@ const Reports = () => {
       {activeTab === 2 && renderCashFlowChart()}
       {activeTab === 3 && renderAccountDistribution()}
 
-      {renderExportDialog()}
       {renderCustomReportDialog()}
     </Container>
   );

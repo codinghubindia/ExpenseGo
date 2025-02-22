@@ -23,7 +23,9 @@ import {
   MenuItem,
   Box,
   Alert,
-  Snackbar
+  Snackbar,
+  Grid,
+  Card
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -31,6 +33,7 @@ import {
   Delete as DeleteIcon
 } from '@mui/icons-material';
 import DatabaseService from '../../services/DatabaseService';
+import { useRegion } from '../../contexts/RegionContext';
 
 // Add this constant at the top of your file after imports
 const ACCOUNT_ICONS = [
@@ -80,6 +83,7 @@ const IconSelector = ({ value, onChange }) => (
 );
 
 const Accounts = () => {
+  const { currency } = useRegion();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState(false);
@@ -89,7 +93,6 @@ const Accounts = () => {
     type: 'checking',
     initialBalance: 0,
     currentBalance: 0,
-    currency: 'USD',
     colorCode: '#000000',
     icon: '💰',
     notes: ''
@@ -97,6 +100,7 @@ const Accounts = () => {
   const [error, setError] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     loadAccounts();
@@ -124,56 +128,69 @@ const Accounts = () => {
       const bankId = 1; // TODO: Get from context
       const year = new Date().getFullYear();
       
+      const accountData = {
+        ...formData,
+        currency: currency.code
+      };
+      
       if (selectedAccount) {
-        await DatabaseService.updateAccount(bankId, year, selectedAccount.accountId, formData);
+        await DatabaseService.updateAccount(bankId, year, selectedAccount.accountId, accountData);
       } else {
-        await DatabaseService.createAccount(bankId, year, formData);
+        await DatabaseService.createAccount(bankId, year, accountData);
       }
       
       await loadAccounts();
       handleCloseDialog();
     } catch (error) {
       console.error('Error saving account:', error);
-      // TODO: Show error notification
+      setError('Failed to save account. Please try again.');
     }
   };
 
   // Update the handleDelete function
   const handleDelete = async (account) => {
     try {
-      const bankId = 1;
+      const bankId = 1; // TODO: Get from context
       const year = new Date().getFullYear();
       
       // First check if it's a default account
       if (account.isDefault) {
-        setError(`Cannot delete "${account.name}" because it's a default account that is required for the system to work properly.`);
+        setError("Cannot delete default accounts");
         return;
       }
+
+      // Get all transactions for this account
+      const transactions = await DatabaseService.getTransactions(bankId, year);
+      const accountTransactions = transactions.filter(tx => 
+        tx.fromAccountId === account.accountId || 
+        tx.toAccountId === account.accountId
+      );
       
-      // Then check for transactions
-      const transactions = await DatabaseService.getTransactionsByAccount(bankId, year, account.accountId);
-      
-      if (transactions && transactions.length > 0) {
+      if (accountTransactions.length > 0) {
         setError(
-          `Cannot delete account "${account.name}" because it has ${transactions.length} ` +
-          `transaction${transactions.length === 1 ? '' : 's'}. ` +
-          'Please move or delete the transactions first.'
+          `Cannot delete account "${account.name}" because it has ${accountTransactions.length} ` +
+          `transaction${accountTransactions.length === 1 ? '' : 's'}. ` +
+          'Please delete the transactions first.'
         );
         return;
       }
 
+      // If no transactions, proceed with deletion confirmation
       setAccountToDelete(account);
       setConfirmDialog(true);
+
     } catch (error) {
       console.error('Error checking account:', error);
-      setError('Failed to process account deletion request. Please try again.');
+      setError('Failed to check account transactions. Please try again.');
     }
   };
 
   // Update the handleConfirmDelete function
   const handleConfirmDelete = async () => {
     try {
-      const bankId = 1;
+      if (!accountToDelete) return;
+
+      const bankId = 1; // TODO: Get from context
       const year = new Date().getFullYear();
       
       await DatabaseService.deleteAccount(bankId, year, accountToDelete.accountId);
@@ -183,14 +200,7 @@ const Accounts = () => {
       setError(null);
     } catch (error) {
       console.error('Error deleting account:', error);
-      if (error.message.includes('default account')) {
-        setError(
-          `Cannot delete "${accountToDelete.name}" as it's a protected default account. ` +
-          'Default accounts are required for the system to work properly.'
-        );
-      } else {
-        setError('Failed to delete account. Please try again.');
-      }
+      setError(error.message || 'Failed to delete account. Please try again.');
     }
   };
 
@@ -202,7 +212,6 @@ const Accounts = () => {
         type: account.type,
         initialBalance: account.initialBalance,
         currentBalance: account.currentBalance,
-        currency: account.currency,
         colorCode: account.colorCode,
         icon: account.icon,
         notes: account.notes || ''
@@ -214,7 +223,6 @@ const Accounts = () => {
         type: 'checking',
         initialBalance: 0,
         currentBalance: 0,
-        currency: 'USD',
         colorCode: '#000000',
         icon: '💰',
         notes: ''
@@ -231,17 +239,18 @@ const Accounts = () => {
       type: 'checking',
       initialBalance: 0,
       currentBalance: 0,
-      currency: 'USD',
       colorCode: '#000000',
       icon: '💰',
       notes: ''
     });
   };
 
-  const formatCurrency = (amount, currency) => {
-    return new Intl.NumberFormat('en-US', {
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat(currency.locale || 'en-US', {
       style: 'currency',
-      currency: currency
+      currency: currency.code,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
     }).format(amount);
   };
 
@@ -263,6 +272,21 @@ const Accounts = () => {
           Add Account
         </Button>
       </Box>
+
+      <Grid container spacing={{ xs: 2, sm: 3 }}>
+        <Grid item xs={12} sm={6} md={4}>
+          <Card
+            sx={{
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              p: { xs: 2, sm: 3 }
+            }}
+          >
+            {/* Account card content */}
+          </Card>
+        </Grid>
+      </Grid>
 
       <TableContainer component={Paper}>
         <Table>
@@ -298,10 +322,10 @@ const Accounts = () => {
                   <TableCell>{account.name}</TableCell>
                   <TableCell>{account.type}</TableCell>
                   <TableCell align="right">
-                    {formatCurrency(account.initialBalance, account.currency)}
+                    {formatCurrency(account.initialBalance)}
                   </TableCell>
                   <TableCell align="right">
-                    {formatCurrency(account.currentBalance, account.currency)}
+                    {formatCurrency(account.currentBalance)}
                   </TableCell>
                   <TableCell>
                     <IconButton
@@ -326,7 +350,13 @@ const Accounts = () => {
         </Table>
       </TableContainer>
 
-      <Dialog open={openDialog} onClose={handleCloseDialog}>
+      <Dialog
+        fullScreen={isMobile}
+        fullWidth
+        maxWidth="sm"
+        open={openDialog}
+        onClose={handleCloseDialog}
+      >
         <form onSubmit={handleSubmit}>
           <DialogTitle>
             {selectedAccount ? 'Edit Account' : 'New Account'}
@@ -364,20 +394,6 @@ const Accounts = () => {
               onChange={(e) => setFormData({ ...formData, initialBalance: parseFloat(e.target.value) })}
               required
             />
-            <FormControl fullWidth margin="dense">
-              <InputLabel>Currency</InputLabel>
-              <Select
-                value={formData.currency}
-                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                required
-              >
-                <MenuItem value="USD">USD - US Dollar</MenuItem>
-                <MenuItem value="INR">INR - Indian Rupee</MenuItem>
-                <MenuItem value="EUR">EUR - Euro</MenuItem>
-                <MenuItem value="GBP">GBP - British Pound</MenuItem>
-                <MenuItem value="JPY">JPY - Japanese Yen</MenuItem>
-              </Select>
-            </FormControl>
             <TextField
               margin="dense"
               label="Color"

@@ -37,7 +37,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../../contexts/AppContext';
 import BackupRestore from '../BackupRestore';
 
-const drawerWidth = 280;
+const drawerWidth = {
+  xs: '100%',
+  sm: 280
+};
 
 const Layout = ({ children }) => {
   const theme = useTheme();
@@ -133,13 +136,25 @@ const Layout = ({ children }) => {
       <AppBar
         position="fixed"
         sx={{
-          width: { md: `calc(100% - ${drawerWidth}px)` },
-          ml: { md: `${drawerWidth}px` },
-          bgcolor: 'background.paper',
+          width: { sm: `calc(100% - ${drawerWidth.sm}px)` },
+          ml: { sm: `${drawerWidth.sm}px` },
+          bgcolor: theme.palette.mode === 'dark' ? 'background.paper' : 'background.default',
           color: 'text.primary',
           boxShadow: 'none',
           borderBottom: 1,
-          borderColor: 'divider'
+          borderColor: 'divider',
+          backdropFilter: 'blur(8px)',
+          backgroundColor: theme.palette.mode === 'dark' 
+            ? 'rgba(30, 41, 59, 0.8)'   // Dark mode background
+            : 'rgba(255, 255, 255, 0.8)', // Light mode background
+          transition: 'all 0.2s ease-in-out',
+          '& .MuiIconButton-root': {
+            color: 'text.primary'
+          },
+          '& .MuiAvatar-root': {
+            bgcolor: theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200',
+            color: 'text.primary'
+          }
         }}
       >
         <Toolbar>
@@ -147,13 +162,30 @@ const Layout = ({ children }) => {
             color="inherit"
             edge="start"
             onClick={handleDrawerToggle}
-            sx={{ mr: 2, display: { md: 'none' } }}
+            sx={{ 
+              mr: 2, 
+              display: { md: 'none' },
+              '&:hover': {
+                bgcolor: theme.palette.mode === 'dark' 
+                  ? 'rgba(255, 255, 255, 0.08)'
+                  : 'rgba(0, 0, 0, 0.04)'
+              }
+            }}
           >
             <MenuIcon />
           </IconButton>
           <Box sx={{ flexGrow: 1 }} />
           <Tooltip title="Theme">
-            <IconButton onClick={handleMenuClick} color="inherit">
+            <IconButton 
+              onClick={handleMenuClick} 
+              sx={{
+                '&:hover': {
+                  bgcolor: theme.palette.mode === 'dark' 
+                    ? 'rgba(255, 255, 255, 0.08)'
+                    : 'rgba(0, 0, 0, 0.04)'
+                }
+              }}
+            >
               {appTheme === 'dark' ? <DarkMode /> : 
                appTheme === 'light' ? <LightMode /> : 
                <Computer />}
@@ -163,6 +195,15 @@ const Layout = ({ children }) => {
             anchorEl={anchorEl}
             open={Boolean(anchorEl)}
             onClose={handleMenuClose}
+            PaperProps={{
+              sx: {
+                bgcolor: 'background.paper',
+                borderRadius: 2,
+                boxShadow: theme.palette.mode === 'dark'
+                  ? '0 4px 20px rgba(0,0,0,0.5)'
+                  : '0 4px 20px rgba(0,0,0,0.1)'
+              }
+            }}
           >
             <MenuItem onClick={() => handleThemeChange('light')}>
               <ListItemIcon>
@@ -183,12 +224,18 @@ const Layout = ({ children }) => {
               System
             </MenuItem>
           </Menu>
-          <Avatar sx={{ ml: 2 }} />
+          <Avatar 
+            sx={{ 
+              ml: 2,
+              bgcolor: theme.palette.mode === 'dark' ? 'grey.800' : 'grey.200',
+              color: 'text.primary'
+            }} 
+          />
         </Toolbar>
       </AppBar>
       <Box
         component="nav"
-        sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}
+        sx={{ width: { md: drawerWidth.sm }, flexShrink: { md: 0 } }}
       >
         <Drawer
           variant="temporary"
@@ -199,7 +246,7 @@ const Layout = ({ children }) => {
             display: { xs: 'block', md: 'none' },
             '& .MuiDrawer-paper': {
               boxSizing: 'border-box',
-              width: drawerWidth,
+              width: drawerWidth.sm,
               bgcolor: 'background.paper',
               borderRight: 1,
               borderColor: 'divider'
@@ -214,7 +261,7 @@ const Layout = ({ children }) => {
             display: { xs: 'none', md: 'block' },
             '& .MuiDrawer-paper': {
               boxSizing: 'border-box',
-              width: drawerWidth,
+              width: drawerWidth.sm,
               bgcolor: 'background.paper',
               borderRight: 1,
               borderColor: 'divider'
@@ -229,10 +276,11 @@ const Layout = ({ children }) => {
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
-          width: { md: `calc(100% - ${drawerWidth}px)` },
+          p: { xs: 2, sm: 3 },
+          width: { sm: `calc(100% - ${drawerWidth.sm}px)` },
           minHeight: '100vh',
-          bgcolor: 'background.default'
+          bgcolor: 'background.default',
+          overflow: 'hidden'
         }}
       >
         <Toolbar />
