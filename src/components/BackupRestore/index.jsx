@@ -54,6 +54,11 @@ const BackupRestore = () => {
       const file = event.target.files[0];
       if (!file) return;
 
+      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+      if (file.size > MAX_FILE_SIZE) {
+        throw new Error('File size too large. Maximum size is 10MB.');
+      }
+
       const extension = file.name.split('.').pop().toLowerCase();
       const isValidExtension = Object.values(BackupService.BACKUP_FORMATS)
         .some(format => format.extension === extension);

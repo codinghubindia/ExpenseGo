@@ -12,12 +12,9 @@ class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    // In production, you might want to log to a service like Sentry
-    if (process.env.NODE_ENV !== 'production') {
-      // eslint-disable-next-line no-console
-      console.error('Error:', error);
-      // eslint-disable-next-line no-console
-      console.error('Error Info:', errorInfo);
+    if (process.env.NODE_ENV === 'production') {
+      // Send to error tracking service
+      // e.g., Sentry.captureException(error, { extra: errorInfo });
     }
   }
 

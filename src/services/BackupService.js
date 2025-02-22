@@ -21,54 +21,46 @@ class BackupService {
     }
   };
 
-  static async createBackup(format = 'DEFAULT') {
+  static PRODUCTION_CONFIG = {
+    maxBackupSize: 10 * 1024 * 1024, // 10MB
+    compressionLevel: 9,
+    maxRetries: 3
+  };
+
+  static async createBackup(format = 'DEFAULT', retryCount = this.PRODUCTION_CONFIG.maxRetries) {
     try {
-      const bankId = 1; // TODO: Get from context
-      const year = new Date().getFullYear();
-
-      // Get all data
-      const [
-        accounts,
-        categories,
-        transactions
-      ] = await Promise.all([
-        DatabaseService.getAccounts(bankId, year),
-        DatabaseService.getCategories(bankId, year),
-        DatabaseService.getTransactions(bankId, year)
-      ]);
-
-      // Create backup object
-      const backup = {
-        version: '1.0',
-        timestamp: new Date().toISOString(),
-        format: format,
-        data: {
-          schema: await this.getSchema(),
-          accounts,
-          categories,
-          transactions
-        }
-      };
-
-      const formatConfig = this.BACKUP_FORMATS[format] || this.BACKUP_FORMATS.DEFAULT;
-      const blob = new Blob(
-        [JSON.stringify(backup, null, 2)], 
-        { type: formatConfig.mime }
-      );
+      const backup = await this.prepareBackup();
+      const blob = await this.compressBackup(backup);
       
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `ExpenseGo_${dayjs().format('YYYY-MM-DD')}.${formatConfig.extension}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      if (blob.size > this.PRODUCTION_CONFIG.maxBackupSize) {
+        throw new Error('Backup size exceeds limit');
+      }
 
+      await this.downloadBackup(blob, format);
       return true;
     } catch (error) {
-      console.error('Backup creation failed:', error);
-      throw error;
+      if (retryCount > 0) {
+        return this.createBackup(format, retryCount - 1);
+      }
+      throw new Error('Backup creation failed after multiple attempts');
+    }
+  }
+
+  static async compressBackup(backup) {
+    // Add compression logic here
+    return new Blob([JSON.stringify(backup)], { type: 'application/json' });
+  }
+
+  static async downloadBackup(blob, format) {
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `ExpenseGo_${dayjs().format('YYYY-MM-DD')}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+    } finally {
+      URL.revokeObjectURL(url);
     }
   }
 
@@ -126,7 +118,6 @@ class BackupService {
 
       return true;
     } catch (error) {
-      console.error('Restore failed:', error);
       throw error;
     }
   }
@@ -157,6 +148,14 @@ class BackupService {
   }
 
   static validateBackup(backup) {
+    // Check version compatibility
+    const currentVersion = '1.0';
+    const backupVersion = backup.version;
+    
+    if (!this.isVersionCompatible(currentVersion, backupVersion)) {
+      throw new Error(`Incompatible backup version. Expected ${currentVersion}, got ${backupVersion}`);
+    }
+
     // Check version and required fields
     if (!backup.version || !backup.timestamp || !backup.data) {
       return false;
@@ -175,6 +174,12 @@ class BackupService {
     return true;
   }
 
+  static isVersionCompatible(currentVersion, backupVersion) {
+    const [currentMajor] = currentVersion.split('.');
+    const [backupMajor] = backupVersion.split('.');
+    return currentMajor === backupMajor;
+  }
+
   static async getSchema() {
     // Get current database schema
     const tables = await DatabaseService.db.exec(`
@@ -183,6 +188,34 @@ class BackupService {
     `);
     
     return tables[0].values.map(([sql]) => sql);
+  }
+
+  static async prepareBackup() {
+    const bankId = 1; // TODO: Get from context
+    const year = new Date().getFullYear();
+
+    // Get all data
+    const [
+      accounts,
+      categories,
+      transactions
+    ] = await Promise.all([
+      DatabaseService.getAccounts(bankId, year),
+      DatabaseService.getCategories(bankId, year),
+      DatabaseService.getTransactions(bankId, year)
+    ]);
+
+    // Create backup object
+    return {
+      version: '1.0',
+      timestamp: new Date().toISOString(),
+      data: {
+        schema: await this.getSchema(),
+        accounts,
+        categories,
+        transactions
+      }
+    };
   }
 }
 

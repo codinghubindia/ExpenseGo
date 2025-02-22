@@ -56,6 +56,10 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// Add version check for cache management
+const CACHE_VERSION = '1.0.0';
+const CACHE_NAME = `expensego-cache-${CACHE_VERSION}`;
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     Promise.all([
@@ -64,7 +68,7 @@ self.addEventListener('activate', (event) => {
       caches.keys().then((cacheNames) => {
         return Promise.all(
           cacheNames.map((cacheName) => {
-            if (cacheName !== 'sql-js-cache') {
+            if (cacheName !== CACHE_NAME) {
               return caches.delete(cacheName);
             }
           })

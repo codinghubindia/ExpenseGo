@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Box,
   Drawer,
@@ -17,7 +17,9 @@ import {
   Avatar,
   Menu,
   MenuItem,
-  Tooltip
+  Tooltip,
+  Dialog,
+  DialogTitle
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -45,15 +47,17 @@ const Layout = ({ children }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [anchorEl, setAnchorEl] = React.useState(null);
+  const [open, setOpen] = React.useState(false);
+  const [title, setTitle] = React.useState('');
 
-  const menuItems = [
+  const menuItems = useMemo(() => [
     { text: 'Dashboard', icon: <Dashboard />, path: '/' },
     { text: 'Accounts', icon: <AccountBalance />, path: '/accounts' },
     { text: 'Transactions', icon: <Payment />, path: '/transactions' },
     { text: 'Categories', icon: <Category />, path: '/categories' },
     { text: 'Reports', icon: <Assessment />, path: '/reports' },
     { text: 'Settings', icon: <Settings />, path: '/settings' }
-  ];
+  ], []);
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -70,6 +74,10 @@ const Layout = ({ children }) => {
   const handleThemeChange = (newTheme) => {
     setTheme(newTheme);
     handleMenuClose();
+  };
+
+  const handleClose = () => {
+    setOpen(false);
   };
 
   const drawer = (
@@ -230,6 +238,17 @@ const Layout = ({ children }) => {
         <Toolbar />
         {children}
       </Box>
+      <Dialog 
+        open={open} 
+        onClose={handleClose}
+        aria-labelledby="dialog-title"
+        disableEnforceFocus
+      >
+        <DialogTitle id="dialog-title">
+          {title}
+        </DialogTitle>
+        {/* ... rest of dialog content */}
+      </Dialog>
     </Box>
   );
 };

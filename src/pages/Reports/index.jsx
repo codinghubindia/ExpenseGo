@@ -25,7 +25,8 @@ import {
   CardContent,
   useTheme,
   Tooltip,
-  Alert
+  Alert,
+  Chip
 } from '@mui/material';
 import {
   PieChart,
@@ -38,7 +39,11 @@ import {
   ResponsiveContainer,
   Cell,
   Area,
-  AreaChart
+  AreaChart,
+  BarChart,
+  Bar,
+  ComposedChart,
+  Line
 } from 'recharts';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -49,7 +54,9 @@ import {
   FileDownload as ExportIcon,
   Add as AddIcon,
   ArrowUpward,
-  ArrowDownward
+  ArrowDownward,
+  TrendingUp,
+  TrendingDown
 } from '@mui/icons-material';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -60,6 +67,18 @@ const Reports = () => {
   const theme = useTheme();
   const { currentBank, currentYear } = useApp();
   const { currency } = useRegion();
+
+  // Move generateMonthlyLabels to the top
+  const generateMonthlyLabels = () => {
+    const months = [];
+    const currentYear = new Date().getFullYear();
+    for (let i = 0; i < 12; i++) {
+      months.push(dayjs(new Date(currentYear, i, 1)).format('YYYY-MM-DD'));
+    }
+    return months;
+  };
+
+  // Now we can use generateMonthlyLabels in our state initializations
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [timeframe, setTimeframe] = useState('month');
@@ -74,9 +93,18 @@ const Reports = () => {
     },
     expensesByCategory: [],
     incomeByCategory: [],
-    cashFlow: [],
+    cashFlow: generateMonthlyLabels().map(date => ({
+      date,
+      income: 0,
+      expenses: 0,
+      netFlow: 0
+    })),
     accountBalances: [],
-    dailyTrends: []
+    dailyTrends: generateMonthlyLabels().map(date => ({
+      date,
+      income: 0,
+      expenses: 0
+    }))
   });
   const [customReportDialog, setCustomReportDialog] = useState(false);
   const [exportDialog, setExportDialog] = useState(false);
@@ -129,220 +157,168 @@ const Reports = () => {
   // Add error state
   const [error, setError] = useState(null);
 
-  const loadReportData = useCallback(async () => {
+  const [transactions, setTransactions] = useState([]);
+  const [categories, setCategories] = useState([]);
+
+  // Move monthlyStats and topCategory inside useEffect
+  const [monthlyStats, setMonthlyStats] = useState({
+    totalIncome: { amount: 0, change: 0 },
+    totalExpenses: { amount: 0, change: 0 },
+    netIncome: { amount: 0, change: 0 }
+  });
+  const [topCategory, setTopCategory] = useState({ name: 'No data', percentage: 0 });
+
+  // First, add these chart style constants at the top of the component
+  const chartStyles = {
+    pieChart: {
+      style: {
+        background: 'transparent'
+      }
+    },
+    areaChart: {
+      style: {
+        background: 'transparent'
+      }
+    }
+  };
+
+  useEffect(() => {
+    loadReportData();
+  }, [currentBank, currentYear]);
+
+  const loadReportData = async () => {
     try {
       setLoading(true);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
 
-      let startDate, endDate;
-      
-      // Ensure we have valid dayjs objects for dates
-      if (exportOptions.dateRange === 'custom' && 
-          exportFilters.startDate && 
-          exportFilters.endDate) {
-        startDate = dayjs(exportFilters.startDate);
-        endDate = dayjs(exportFilters.endDate);
-      } else {
-      switch (timeframe) {
-        case 'week':
-          startDate = dayjs().subtract(7, 'day');
-          endDate = dayjs();
-          break;
-        case 'month':
-          startDate = dayjs().startOf('month');
-          endDate = dayjs().endOf('month');
-          break;
-        case 'year':
-          startDate = dayjs().startOf('year');
-          endDate = dayjs().endOf('year');
-          break;
-        default:
-          startDate = dayjs().startOf('month');
-          endDate = dayjs().endOf('month');
-        }
-      }
-
-      // Ensure we have valid dates before proceeding
-      if (!startDate.isValid() || !endDate.isValid()) {
-        console.error('Invalid date range');
-        setLoading(false);
-        return;
-      }
-
-      // Get transactions for the period
-      const transactions = await DatabaseService.getTransactions(bankId, year, {
-        startDate: startDate.format('YYYY-MM-DD'),
-        endDate: endDate.format('YYYY-MM-DD')
-      });
-
-      // Get categories
-      const categories = await DatabaseService.getCategories(bankId, year);
-
-      // Calculate expenses by category
-      const expensesByCategory = categories
-        .filter(cat => cat.type === 'expense')
-        .map(category => {
-          const total = transactions
-            .filter(t => t.categoryId === category.categoryId && t.type === 'expense')
-            .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0);
-          return {
-            name: category.name,
-            value: total,
-            color: category.colorCode
-          };
-        })
-        .filter(cat => cat.value > 0)
-        .sort((a, b) => b.value - a.value);
-
-      // Calculate income by category
-      const incomeByCategory = categories
-        .filter(cat => cat.type === 'income')
-        .map(category => {
-          const total = transactions
-            .filter(t => t.categoryId === category.categoryId && t.type === 'income')
-            .reduce((sum, t) => sum + Number(t.amount), 0);
-          return {
-            name: category.name,
-            value: total,
-            color: category.colorCode
-          };
-        })
-        .filter(cat => cat.value > 0)
-        .sort((a, b) => b.value - a.value);
-
-      // Calculate daily cash flow
-      const cashFlow = [];
-      let currentDate = startDate;
-      while (currentDate.isBefore(endDate) || currentDate.isSame(endDate, 'day')) {
-        const dayTransactions = transactions.filter(t => 
-          dayjs(t.date).format('YYYY-MM-DD') === currentDate.format('YYYY-MM-DD')
-        );
-
-        const income = dayTransactions
-          .filter(t => t.type === 'income')
-          .reduce((sum, t) => sum + Number(t.amount), 0);
-
-        const expense = dayTransactions
-          .filter(t => t.type === 'expense')
-          .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0);
-
-        cashFlow.push({
-          date: currentDate.format('MMM DD'),
-          income,
-          expense,
-          net: income - expense
-        });
-
-        currentDate = currentDate.add(1, 'day');
-      }
-
-      // Get account balances
-      const accounts = await DatabaseService.getAccounts(bankId, year);
-      const accountBalances = accounts.map(account => ({
-        name: account.name,
-        value: Number(account.currentBalance),
-        color: COLORS[accounts.indexOf(account) % COLORS.length]
-      }));
-
-      // Calculate summary data
-      const totalExpenses = transactions
-        .filter(t => t.type === 'expense')
-        .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0);
-
-      const totalIncome = transactions
-        .filter(t => t.type === 'income')
-        .reduce((sum, t) => sum + Number(t.amount), 0);
-
-      const netIncome = totalIncome - totalExpenses;
-
-      // Find top expense category
-      const expenseCategories = {};
-      transactions
-        .filter(t => t.type === 'expense')
-        .forEach(t => {
-          expenseCategories[t.categoryId] = (expenseCategories[t.categoryId] || 0) + Math.abs(Number(t.amount));
-        });
-
-      const topExpenseCategoryId = Object.entries(expenseCategories)
-        .sort(([, a], [, b]) => b - a)[0]?.[0];
-
-      const topExpenseCategory = categories.find(c => c.categoryId === topExpenseCategoryId)?.name || '';
-
-      // Ensure all numeric values are properly converted
-      const formattedData = {
-        summary: {
-          totalIncome,
-          totalExpenses,
-          netIncome,
-          topExpenseCategory,
-          topIncomeSource: '', // Calculate this if needed
-          monthlyGrowth: 0 // Calculate this if needed
-        },
-        expensesByCategory: expensesByCategory.map(item => ({
-          ...item,
-          value: Number(item.value) || 0
-        })),
-        incomeByCategory: incomeByCategory.map(item => ({
-          ...item,
-          value: Number(item.value) || 0
-        })),
-        cashFlow: cashFlow.map(item => ({
-          ...item,
-          income: Number(item.income) || 0,
-          expense: Number(item.expense) || 0,
-          net: Number(item.net) || 0
-        })),
-        accountBalances: accountBalances.map(item => ({
-          ...item,
-          value: Number(item.value) || 0
-        })),
-        dailyTrends: transactions.map(t => ({
-          date: dayjs(t.date).format('MMM DD'),
-          transactions: 1
-        }))
-      };
-
-      setReportData(formattedData);
-    } catch (error) {
-      console.error('Error loading report data:', error);
-      setError(error.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [timeframe, exportOptions, exportFilters]);
-
-  // Load accounts and categories for filters
-  const loadFilterData = useCallback(async () => {
-    try {
-      const bankId = currentBank?.bankId || 1;
-      const year = currentYear || new Date().getFullYear();
-      
-      const [accounts, categories] = await Promise.all([
-        DatabaseService.getAccounts(bankId, year),
+      const [transactionsData, categoriesData] = await Promise.all([
+        DatabaseService.getTransactions(bankId, year),
         DatabaseService.getCategories(bankId, year)
       ]);
 
-      setAvailableAccounts(accounts);
-      setAvailableCategories(categories);
-    } catch (error) {
-      console.error('Error loading filter data:', error);
-    }
-  }, [currentBank, currentYear]);
+      if (!Array.isArray(transactionsData) || !Array.isArray(categoriesData)) {
+        throw new Error('Invalid data received from database');
+      }
 
-  // Memoize loadData functions
-  const loadData = useCallback(async () => {
-    try {
-      await loadReportData();
-      await loadFilterData();
+      setTransactions(transactionsData);
+      setCategories(categoriesData);
+
+      // Calculate stats after data is loaded
+      const stats = getMonthlyComparison(transactionsData);
+      const topCat = getTopCategory(transactionsData, categoriesData);
+      
+      // Prepare chart data
+      const chartData = {
+        expensesByCategory: calculateExpensesByCategory(transactionsData, categoriesData),
+        incomeByCategory: calculateIncomeByCategory(transactionsData, categoriesData),
+        cashFlow: calculateCashFlow(transactionsData),
+        accountBalances: calculateAccountBalances(transactionsData),
+        dailyTrends: calculateDailyTrends(transactionsData)
+      };
+      
+      setReportData(prevData => ({
+        ...prevData,
+        ...chartData
+      }));
+      setMonthlyStats(stats);
+      setTopCategory(topCat);
     } catch (err) {
+      console.error('Error loading report data:', err);
       setError(err.message);
+    } finally {
+      setLoading(false);
     }
-  }, [currentBank, currentYear, loadReportData, loadFilterData]);
+  };
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  // Update helper functions to accept data as parameters
+  const getTopCategory = (transactions, categories) => {
+    const categoryExpenses = new Map();
+    const totalExpenses = transactions
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    transactions
+      .filter(t => t.type === 'expense')
+      .forEach(t => {
+        const category = categories.find(c => c.categoryId === t.categoryId);
+        if (category) {
+          const currentAmount = categoryExpenses.get(category.categoryId) || 0;
+          categoryExpenses.set(category.categoryId, currentAmount + Math.abs(t.amount));
+        }
+      });
+
+    if (categoryExpenses.size === 0) return { name: 'No data', percentage: 0 };
+
+    const topCategoryId = [...categoryExpenses.entries()]
+      .sort((a, b) => b[1] - a[1])[0][0];
+    
+    const topCategory = categories.find(c => c.categoryId === topCategoryId);
+    const topAmount = categoryExpenses.get(topCategoryId);
+    const percentage = totalExpenses > 0 ? (topAmount / totalExpenses) * 100 : 0;
+
+    return {
+      name: topCategory?.name || 'No data',
+      percentage: percentage
+    };
+  };
+
+  const getMonthlyComparison = (transactions) => {
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+
+    const currentMonthData = transactions.filter(t => {
+      const txDate = new Date(t.date);
+      return txDate.getMonth() === currentMonth && 
+             txDate.getFullYear() === currentYear;
+    });
+
+    const lastMonthData = transactions.filter(t => {
+      const txDate = new Date(t.date);
+      return txDate.getMonth() === (currentMonth - 1) && 
+             txDate.getFullYear() === currentYear;
+    });
+
+    const getCurrentTotal = (type) => currentMonthData
+      .filter(t => t.type === type)
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    const getLastTotal = (type) => lastMonthData
+      .filter(t => t.type === type)
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    const calculateChange = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / previous) * 100;
+    };
+
+    const currentIncome = getCurrentTotal('income');
+    const lastIncome = getLastTotal('income');
+    const incomeChange = calculateChange(currentIncome, lastIncome);
+
+    const currentExpenses = getCurrentTotal('expense');
+    const lastExpenses = getLastTotal('expense');
+    const expensesChange = calculateChange(currentExpenses, lastExpenses);
+
+    const currentNet = currentIncome - currentExpenses;
+    const lastNet = lastIncome - lastExpenses;
+    const netChange = calculateChange(currentNet, lastNet);
+
+    return {
+      totalIncome: {
+        amount: currentIncome,
+        change: incomeChange
+      },
+      totalExpenses: {
+        amount: currentExpenses,
+        change: expensesChange
+      },
+      netIncome: {
+        amount: currentNet,
+        change: netChange
+      }
+    };
+  };
 
   // In the Reports component, define formatCurrency using the currency from context
   const formatCurrency = useCallback((amount) => {
@@ -372,7 +348,7 @@ const Reports = () => {
     }
   }, [currency]);
 
-  // Update CustomTooltip component to handle currency properly
+  // Update CustomTooltip component
   const CustomTooltip = useCallback(({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
@@ -385,7 +361,7 @@ const Reports = () => {
           boxShadow: 3
         }}>
           <Typography variant="subtitle2" gutterBottom>
-            {label}
+            {dayjs(label).format('MMMM')}
           </Typography>
           {payload.map((entry, index) => (
             <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
@@ -680,524 +656,431 @@ const Reports = () => {
     }
   };
 
-  // Update the renderExpensesChart function
-  const renderExpensesChart = () => {
-    if (loading) {
-      return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-          <CircularProgress />
-        </Box>
-      );
+  // Update the calculateDailyTrends function
+  const calculateDailyTrends = (transactions) => {
+    if (!Array.isArray(transactions)) {
+      return generateMonthlyLabels().map(date => ({
+        date,
+        income: 0,
+        expenses: 0
+      }));
     }
 
+    const monthlyMap = new Map();
+    
+    // Initialize all months with zero values
+    generateMonthlyLabels().forEach(monthDate => {
+      monthlyMap.set(monthDate, {
+        date: monthDate,
+        income: 0,
+        expenses: 0
+      });
+    });
+
+    // Group transactions by month
+    transactions.forEach(t => {
+      if (!t || !t.date || !t.type) return; // Skip invalid transactions
+      
+      const monthDate = dayjs(t.date).startOf('month').format('YYYY-MM-DD');
+      const current = monthlyMap.get(monthDate);
+      
+      if (!current) return; // Skip if month not found in map
+      
+      if (t.type === 'income') {
+        current.income += Number(t.amount) || 0;
+      } else if (t.type === 'expense') {
+        current.expenses += Math.abs(Number(t.amount)) || 0;
+      }
+    });
+
+    return Array.from(monthlyMap.values())
+      .sort((a, b) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf());
+  };
+
+  // Update the calculateCashFlow function similarly
+  const calculateCashFlow = (transactions) => {
+    if (!Array.isArray(transactions)) {
+      return generateMonthlyLabels().map(date => ({
+        date,
+        income: 0,
+        expenses: 0,
+        netFlow: 0
+      }));
+    }
+
+    const monthlyMap = new Map();
+    
+    // Initialize all months with zero values
+    generateMonthlyLabels().forEach(monthDate => {
+      monthlyMap.set(monthDate, {
+        date: monthDate,
+        income: 0,
+        expenses: 0,
+        netFlow: 0
+      });
+    });
+
+    // Group transactions by month
+    transactions.forEach(t => {
+      if (!t || !t.date || !t.type) return; // Skip invalid transactions
+      
+      const monthDate = dayjs(t.date).startOf('month').format('YYYY-MM-DD');
+      const current = monthlyMap.get(monthDate);
+      
+      if (!current) return; // Skip if month not found in map
+      
+      if (t.type === 'income') {
+        current.income += Number(t.amount) || 0;
+      } else if (t.type === 'expense') {
+        current.expenses += Math.abs(Number(t.amount)) || 0;
+      }
+      
+      current.netFlow = current.income - current.expenses;
+    });
+
+    return Array.from(monthlyMap.values())
+      .sort((a, b) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf());
+  };
+
+  // Update the renderExpensesChart function
+  const renderExpensesChart = () => {
     return (
-      <Grid container spacing={3}>
-        {/* Summary Cards */}
-        <Grid item xs={12}>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Total Expenses
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {formatCurrency(reportData.summary?.totalExpenses || 0)}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ArrowUpward color="error" fontSize="small" />
-                    <Typography variant="body2" color="error.main">
-                      +12% from last month
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Total Income
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {formatCurrency(reportData.summary.totalIncome)}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ArrowUpward color="success" fontSize="small" />
-                    <Typography variant="body2" color="success.main">
-                      +8% from last month
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Net Income
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {formatCurrency(reportData.summary.netIncome)}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ArrowDownward color="error" fontSize="small" />
-                    <Typography variant="body2" color="error.main">
-                      -4% from last month
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Top Category
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {reportData.summary.topExpenseCategory}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    32% of total expenses
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
+      <Box sx={{ mt: 3 }}>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={6}>
+            <Card sx={{ height: '100%', boxShadow: theme.shadows[4] }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Expenses by Category
+                </Typography>
+                <Box sx={{ height: 300, mt: 2 }}>
+                  <ResponsiveContainer>
+                    <PieChart {...chartStyles.pieChart}>
+                      <Pie
+                        data={reportData.expensesByCategory}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                      >
+                        {reportData.expensesByCategory.map((entry, index) => (
+                          <Cell 
+                            key={`cell-${index}`} 
+                            fill={COLORS[index % COLORS.length]}
+                            stroke={theme.palette.background.paper}
+                            strokeWidth={2}
+                          />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        content={<CustomTooltip />}
+                        cursor={{ fill: 'transparent' }}
+                      />
+                      <Legend 
+                        verticalAlign="bottom"
+                        height={36}
+                        formatter={(value) => (
+                          <span style={{ color: theme.palette.text.primary }}>{value}</span>
+                        )}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Card sx={{ height: '100%', boxShadow: theme.shadows[4] }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Monthly Expense Trend
+                </Typography>
+                <Box sx={{ height: 300, mt: 2 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={reportData.dailyTrends} barGap={0} barCategoryGap={0}>
+                      <defs>
+                        <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={theme.palette.error.light} stopOpacity={1}/>
+                          <stop offset="100%" stopColor={theme.palette.error.main} stopOpacity={0.8}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid 
+                        strokeDasharray="3 3" 
+                        stroke={theme.palette.divider}
+                        opacity={0.5}
+                        vertical={false}
+                      />
+                      <XAxis 
+                        dataKey="date" 
+                        stroke={theme.palette.text.secondary}
+                        tick={{ fill: theme.palette.text.secondary }}
+                        tickFormatter={(value) => dayjs(value).format('MMM')}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis 
+                        stroke={theme.palette.text.secondary}
+                        tick={{ fill: theme.palette.text.secondary }}
+                        tickFormatter={(value) => `₹${value}`}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <RechartsTooltip 
+                        content={<CustomTooltip />}
+                        cursor={{ fill: theme.palette.action.hover }}
+                      />
+                      <Bar
+                        dataKey="expenses"
+                        fill="url(#expenseGradient)"
+                        radius={[4, 4, 0, 0]}
+                        maxBarSize={40}
+                        minPointSize={5}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Box>
+              </CardContent>
+            </Card>
           </Grid>
         </Grid>
-
-        {/* Charts */}
-        <Grid item xs={12} md={8}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Monthly Trend
-              </Typography>
-              <Box sx={{ height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={reportData.cashFlow}>
-                    <defs>
-                      <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={theme.palette.error.main} stopOpacity={0.1}/>
-                        <stop offset="95%" stopColor={theme.palette.error.main} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
-                    <XAxis 
-                      dataKey="date" 
-                      stroke={theme.palette.text.secondary}
-                      style={{ fontSize: '12px' }}
-                    />
-                    <YAxis
-                      stroke={theme.palette.text.secondary}
-                      style={{ fontSize: '12px' }}
-                      tickFormatter={(value) => formatCurrency(value)}
-                    />
-                    <RechartsTooltip content={CustomTooltip} />
-                    <Area
-                      type="monotone"
-                      dataKey="expense"
-                      stroke={theme.palette.error.main}
-                      fill="url(#colorExpense)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={4}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Category Distribution
-              </Typography>
-              <Box sx={{ height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={reportData.expensesByCategory}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      {reportData.expensesByCategory.map((entry, index) => (
-                        <Cell 
-                          key={`cell-${index}`} 
-                          fill={COLORS[index % COLORS.length]}
-                          stroke={theme.palette.background.paper}
-                          strokeWidth={2}
-                        />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip content={CustomTooltip} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <Box sx={{ mt: 2 }}>
-                  {reportData.expensesByCategory.slice(0, 4).map((category, index) => (
-                    <Box
-                      key={index}
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        mb: 1
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Box
-                          sx={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: '50%',
-                            bgcolor: COLORS[index % COLORS.length]
-                          }}
-                        />
-                        <Typography variant="body2">
-                          {category.name}
-                        </Typography>
-                      </Box>
-                      <Typography variant="body2" fontWeight="medium">
-                        {formatCurrency(category.value)}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+      </Box>
     );
   };
 
-  // Update the renderIncomeChart function
+  // Similarly update the renderIncomeChart function
   const renderIncomeChart = () => {
-    if (loading) {
-      return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-          <CircularProgress />
-        </Box>
-      );
-    }
-
     return (
-      <Grid container spacing={3}>
-        {/* Summary Cards */}
-        <Grid item xs={12}>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Total Income
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {formatCurrency(reportData.summary?.totalIncome || 0)}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ArrowUpward color="success" fontSize="small" />
-                    <Typography variant="body2" color="success.main">
-                      +8% from last month
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Average Income
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {formatCurrency((reportData.summary?.totalIncome || 0) / 12)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Per month
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Top Source
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {reportData.summary.topIncomeSource || 'N/A'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    28% of total income
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Income Growth
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    +12%
-                  </Typography>
-                  <Typography variant="body2" color="success.main">
-                    Year over year
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
+      <Box sx={{ mt: 3 }}>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={6}>
+            <Card sx={{ height: '100%', boxShadow: theme.shadows[4] }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Income by Source
+                </Typography>
+                <Box sx={{ height: 300, mt: 2 }}>
+                  <ResponsiveContainer>
+                    <PieChart {...chartStyles.pieChart}>
+                      <Pie
+                        data={reportData.incomeByCategory}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                      >
+                        {reportData.incomeByCategory.map((entry, index) => (
+                          <Cell 
+                            key={`cell-${index}`} 
+                            fill={COLORS[index % COLORS.length]}
+                            stroke={theme.palette.background.paper}
+                            strokeWidth={2}
+                          />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip 
+                        content={<CustomTooltip />}
+                        cursor={{ fill: 'transparent' }}
+                      />
+                      <Legend 
+                        verticalAlign="bottom"
+                        height={36}
+                        formatter={(value) => (
+                          <span style={{ color: theme.palette.text.primary }}>{value}</span>
+                        )}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Card sx={{ height: '100%', boxShadow: theme.shadows[4] }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Monthly Income Trend
+                </Typography>
+                <Box sx={{ height: 300, mt: 2 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={reportData.dailyTrends} barGap={0} barCategoryGap={0}>
+                      <defs>
+                        <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={theme.palette.success.light} stopOpacity={1}/>
+                          <stop offset="100%" stopColor={theme.palette.success.main} stopOpacity={0.8}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid 
+                        strokeDasharray="3 3" 
+                        stroke={theme.palette.divider}
+                        opacity={0.5}
+                        vertical={false}
+                      />
+                      <XAxis 
+                        dataKey="date" 
+                        stroke={theme.palette.text.secondary}
+                        tick={{ fill: theme.palette.text.secondary }}
+                        tickFormatter={(value) => dayjs(value).format('MMM')}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis 
+                        stroke={theme.palette.text.secondary}
+                        tick={{ fill: theme.palette.text.secondary }}
+                        tickFormatter={(value) => `₹${value}`}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <RechartsTooltip 
+                        content={<CustomTooltip />}
+                        cursor={{ fill: theme.palette.action.hover }}
+                      />
+                      <Bar
+                        dataKey="income"
+                        fill="url(#incomeGradient)"
+                        radius={[4, 4, 0, 0]}
+                        maxBarSize={40}
+                        minPointSize={5}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Box>
+              </CardContent>
+            </Card>
           </Grid>
         </Grid>
-
-        {/* Charts */}
-        <Grid item xs={12} md={8}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Monthly Income Trend
-              </Typography>
-              <Box sx={{ height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={reportData.cashFlow}>
-                    <defs>
-                      <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={theme.palette.success.main} stopOpacity={0.1}/>
-                        <stop offset="95%" stopColor={theme.palette.success.main} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
-                    <XAxis 
-                      dataKey="date" 
-                      stroke={theme.palette.text.secondary}
-                      style={{ fontSize: '12px' }}
-                    />
-                    <YAxis
-                      stroke={theme.palette.text.secondary}
-                      style={{ fontSize: '12px' }}
-                      tickFormatter={(value) => formatCurrency(value)}
-                    />
-                    <RechartsTooltip content={CustomTooltip} />
-                    <Area
-                      type="monotone"
-                      dataKey="income"
-                      stroke={theme.palette.success.main}
-                      fill="url(#colorIncome)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} md={4}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Income Sources
-              </Typography>
-              <Box sx={{ height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={reportData.incomeByCategory}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      {reportData.incomeByCategory.map((entry, index) => (
-                        <Cell 
-                          key={`cell-${index}`} 
-                          fill={COLORS[index % COLORS.length]}
-                          stroke={theme.palette.background.paper}
-                          strokeWidth={2}
-                        />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip content={CustomTooltip} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <Box sx={{ mt: 2 }}>
-                  {reportData.incomeByCategory.slice(0, 4).map((category, index) => (
-                    <Box
-                      key={index}
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        mb: 1
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Box
-                          sx={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: '50%',
-                            bgcolor: COLORS[index % COLORS.length]
-                          }}
-                        />
-                        <Typography variant="body2">
-                          {category.name}
-                        </Typography>
-                      </Box>
-                      <Typography variant="body2" fontWeight="medium">
-                        {formatCurrency(category.value)}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+      </Box>
     );
   };
 
   const renderCashFlowChart = () => {
-    if (loading) {
-      return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-          <CircularProgress />
-        </Box>
-      );
-    }
-
     return (
-      <Grid container spacing={3}>
-        {/* Summary Cards */}
-        <Grid item xs={12}>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" variant="overline">
-                    Net Cash Flow
-                  </Typography>
-                  <Typography variant="h4" sx={{ mb: 2 }}>
-                    {formatCurrency(reportData.summary?.netIncome || 0)}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {reportData.summary?.netIncome > 0 ? (
-                      <>
-                        <ArrowUpward color="success" fontSize="small" />
-                        <Typography variant="body2" color="success.main">
-                          Positive cash flow
-                        </Typography>
-                      </>
-                    ) : (
-                      <>
-                        <ArrowDownward color="error" fontSize="small" />
-                        <Typography variant="body2" color="error.main">
-                          Negative cash flow
-                        </Typography>
-                      </>
+      <Box sx={{ mt: 3 }}>
+        <Card sx={{ height: '100%', boxShadow: theme.shadows[4] }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Cash Flow Analysis
+            </Typography>
+            <Box sx={{ height: 400, mt: 2 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={reportData.cashFlow} barGap={0} barCategoryGap={0}>
+                  <defs>
+                    <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.palette.success.light} stopOpacity={0.8}/>
+                      <stop offset="100%" stopColor={theme.palette.success.main} stopOpacity={0.2}/>
+                    </linearGradient>
+                    <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.palette.error.light} stopOpacity={0.8}/>
+                      <stop offset="100%" stopColor={theme.palette.error.main} stopOpacity={0.2}/>
+                    </linearGradient>
+                    <linearGradient id="netGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={theme.palette.primary.light} stopOpacity={0.8}/>
+                      <stop offset="100%" stopColor={theme.palette.primary.main} stopOpacity={0.2}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid 
+                    strokeDasharray="3 3" 
+                    stroke={theme.palette.divider}
+                    opacity={0.5}
+                    vertical={false}
+                  />
+                  <XAxis 
+                    dataKey="date" 
+                    stroke={theme.palette.text.secondary}
+                    tick={{ fill: theme.palette.text.secondary }}
+                    tickFormatter={(value) => dayjs(value).format('MMM')}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis 
+                    stroke={theme.palette.text.secondary}
+                    tick={{ fill: theme.palette.text.secondary }}
+                    tickFormatter={(value) => `₹${value}`}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <RechartsTooltip 
+                    content={<CustomTooltip />}
+                    cursor={{ fill: theme.palette.action.hover }}
+                  />
+                  <Bar 
+                    dataKey="income" 
+                    fill="url(#incomeGradient)"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                    minPointSize={5}
+                    stackId="a"
+                    name="Income"
+                  />
+                  <Bar 
+                    dataKey="expenses" 
+                    fill="url(#expenseGradient)"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={40}
+                    minPointSize={5}
+                    stackId="a"
+                    name="Expenses"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="netFlow"
+                    stroke={theme.palette.primary.main}
+                    strokeWidth={2}
+                    dot={false}
+                    name="Net Flow"
+                  />
+                  <Legend 
+                    verticalAlign="bottom"
+                    height={36}
+                    formatter={(value) => (
+                      <span style={{ color: theme.palette.text.primary }}>{value}</span>
                     )}
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            {/* Add more summary cards for cash flow */}
-          </Grid>
-        </Grid>
-
-        {/* Cash Flow Chart */}
-        <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Cash Flow Analysis
-              </Typography>
-              <Box sx={{ height: 400 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={reportData.cashFlow}>
-                    <defs>
-                      <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={theme.palette.success.main} stopOpacity={0.1}/>
-                        <stop offset="95%" stopColor={theme.palette.success.main} stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorExpenses" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={theme.palette.error.main} stopOpacity={0.1}/>
-                        <stop offset="95%" stopColor={theme.palette.error.main} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
-                    <XAxis dataKey="date" stroke={theme.palette.text.secondary} />
-                    <YAxis stroke={theme.palette.text.secondary} tickFormatter={(value) => formatCurrency(value)} />
-                    <RechartsTooltip content={CustomTooltip} />
-                    <Area
-                      type="monotone"
-                      dataKey="income"
-                      name="Income"
-                      stroke={theme.palette.success.main}
-                      fill="url(#colorIncome)"
-                      strokeWidth={2}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="expense"
-                      name="Expenses"
-                      stroke={theme.palette.error.main}
-                      fill="url(#colorExpenses)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Box>
+          </CardContent>
+        </Card>
+      </Box>
     );
   };
 
-  const renderAccountDistribution = () => (
-    <Paper sx={{ p: 3 }}>
-      <Typography variant="h6" gutterBottom>
-        Account Balance Distribution
-      </Typography>
-      <ResponsiveContainer width="100%" height={400}>
-        <PieChart>
-          <Pie
-            data={reportData.accountBalances}
-            dataKey="value"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            outerRadius={150}
-            label={({ name, value }) => `${name}: ${formatCurrency(value)}`}
-          >
-            {reportData.accountBalances.map((entry, index) => (
-              <Cell key={index} fill={entry.color} />
-            ))}
-          </Pie>
-          <Tooltip formatter={(value) => formatCurrency(value)} />
-          <Legend />
-        </PieChart>
-      </ResponsiveContainer>
-    </Paper>
-  );
+  const renderAccountDistribution = () => {
+    return (
+      <Box sx={{ mt: 3 }}>
+        <Card>
+          <CardContent>
+            <Typography variant="h6">Account Balance Distribution</Typography>
+            <Box sx={{ height: 400, mt: 2 }}>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie
+                    data={reportData.accountBalances}
+                    dataKey="balance"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={150}
+                  >
+                    {reportData.accountBalances.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip content={<CustomTooltip />} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </Box>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  };
 
   const renderExportDialog = () => (
     <Dialog 
@@ -1564,9 +1447,9 @@ const Reports = () => {
           <FormControlLabel
             control={
               <Checkbox
-                checked={customReport.includeCharts}
-                onChange={(e) => setCustomReport({ ...customReport, includeCharts: e.target.checked })}
-              />
+              checked={customReport.includeCharts}
+              onChange={(e) => setCustomReport({ ...customReport, includeCharts: e.target.checked })}
+            />
             }
             label="Include Charts"
             sx={checkboxStyles}
@@ -1594,7 +1477,6 @@ const Reports = () => {
       boxShadow: theme.shadows[2]
     }
   };
-
 
   const selectStyles = {
     '& .MuiSelect-select': {
@@ -1633,9 +1515,56 @@ const Reports = () => {
     }
   };
 
+  // Add these helper functions for chart data
+  const calculateExpensesByCategory = (transactions, categories) => {
+    const expenseMap = new Map();
+    
+    transactions
+      .filter(t => t.type === 'expense')
+      .forEach(t => {
+        const category = categories.find(c => c.categoryId === t.categoryId);
+        if (category) {
+          const currentAmount = expenseMap.get(category.name) || 0;
+          expenseMap.set(category.name, currentAmount + Math.abs(t.amount));
+        }
+      });
 
+    return Array.from(expenseMap, ([name, value]) => ({ name, value }));
+  };
 
+  const calculateIncomeByCategory = (transactions, categories) => {
+    const incomeMap = new Map();
+    
+    transactions
+      .filter(t => t.type === 'income')
+      .forEach(t => {
+        const category = categories.find(c => c.categoryId === t.categoryId);
+        if (category) {
+          const currentAmount = incomeMap.get(category.name) || 0;
+          incomeMap.set(category.name, currentAmount + t.amount);
+        }
+      });
 
+    return Array.from(incomeMap, ([name, value]) => ({ name, value }));
+  };
+
+  const calculateAccountBalances = (transactions) => {
+    const accountMap = new Map();
+    
+    transactions.forEach(t => {
+      if (t.accountName) {
+        const current = accountMap.get(t.accountName) || { name: t.accountName, balance: 0 };
+        if (t.type === 'income') {
+          current.balance += t.amount;
+        } else if (t.type === 'expense') {
+          current.balance -= Math.abs(t.amount);
+        }
+        accountMap.set(t.accountName, current);
+      }
+    });
+
+    return Array.from(accountMap.values());
+  };
 
   if (loading) {
     return (
@@ -1695,15 +1624,108 @@ const Reports = () => {
         </Grid>
       </Box>
 
+      <Grid container spacing={3} sx={{ my: 3 }}>
+        {/* Total Expenses Card */}
+        <Grid item xs={12} md={3}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="subtitle2" color="text.secondary">
+                Total Expenses
+              </Typography>
+              <Typography variant="h4" sx={{ my: 2 }}>
+                {formatCurrency(monthlyStats.totalExpenses.amount)}
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Chip
+                  icon={monthlyStats.totalExpenses.change >= 0 ? <TrendingUp /> : <TrendingDown />}
+                  label={`${Math.abs(monthlyStats.totalExpenses.change).toFixed(1)}% from last month`}
+                  size="small"
+                  color={monthlyStats.totalExpenses.change >= 0 ? 'error' : 'success'}
+                  sx={{ mr: 1 }}
+                />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Total Income Card */}
+        <Grid item xs={12} md={3}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="subtitle2" color="text.secondary">
+                Total Income
+              </Typography>
+              <Typography variant="h4" sx={{ my: 2 }}>
+                {formatCurrency(monthlyStats.totalIncome.amount)}
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Chip
+                  icon={monthlyStats.totalIncome.change >= 0 ? <TrendingUp /> : <TrendingDown />}
+                  label={`${Math.abs(monthlyStats.totalIncome.change).toFixed(1)}% from last month`}
+                  size="small"
+                  color={monthlyStats.totalIncome.change >= 0 ? 'success' : 'error'}
+                  sx={{ mr: 1 }}
+                />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Net Income Card */}
+        <Grid item xs={12} md={3}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="subtitle2" color="text.secondary">
+                Net Income
+              </Typography>
+              <Typography variant="h4" sx={{ my: 2 }}>
+                {formatCurrency(monthlyStats.netIncome.amount)}
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Chip
+                  icon={monthlyStats.netIncome.change >= 0 ? <TrendingUp /> : <TrendingDown />}
+                  label={`${Math.abs(monthlyStats.netIncome.change).toFixed(1)}% from last month`}
+                  size="small"
+                  color={monthlyStats.netIncome.change >= 0 ? 'success' : 'error'}
+                  sx={{ mr: 1 }}
+                />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Top Category Card */}
+        <Grid item xs={12} md={3}>
+          <Card sx={{ height: '100%' }}>
+            <CardContent>
+              <Typography variant="subtitle2" color="text.secondary">
+                Top Category
+              </Typography>
+              <Typography variant="h4" sx={{ my: 2 }}>
+                {topCategory.name}
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Chip
+                  label={`${Math.round(topCategory.percentage)}% of total expenses`}
+                  size="small"
+                  color="primary"
+                  sx={{ mr: 1 }}
+                />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
       <Tabs
         value={activeTab}
         onChange={(e, newValue) => setActiveTab(newValue)}
         sx={tabStyles}
       >
-        <Tab label="Expenses" sx={{ cursor: 'pointer' }} />
-        <Tab label="Income" sx={{ cursor: 'pointer' }} />
-        <Tab label="Cash Flow" sx={{ cursor: 'pointer' }} />
-        <Tab label="Account Distribution" sx={{ cursor: 'pointer' }} />
+        <Tab label="Expenses" />
+        <Tab label="Income" />
+        <Tab label="Cash Flow" />
+        <Tab label="Account Distribution" />
       </Tabs>
 
       {activeTab === 0 && renderExpensesChart()}
@@ -1716,7 +1738,5 @@ const Reports = () => {
     </Container>
   );
 };
-
-
 
 export default Reports;

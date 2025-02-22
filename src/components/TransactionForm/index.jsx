@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -19,7 +19,8 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import dayjs from 'dayjs';
 
 const TransactionForm = ({ open, onClose, onSubmit, accounts, categories, initialData = null }) => {
-  const [formData, setFormData] = useState({
+  // Initialize all form fields with default values
+  const defaultFormData = {
     accountId: '',
     toAccountId: '',
     categoryId: '',
@@ -27,66 +28,97 @@ const TransactionForm = ({ open, onClose, onSubmit, accounts, categories, initia
     amount: '',
     date: dayjs(),
     description: '',
-    paymentMethod: '',
+    paymentMethod: 'cash',
     location: '',
     isRecurring: false
-  });
+  };
+
+  const [formData, setFormData] = useState(defaultFormData);
+  const [error, setError] = useState(null);
+  const formRef = useRef(null);
+
+  // Reset form to default values
+  const resetForm = () => {
+    setFormData(defaultFormData);
+    setError(null);
+  };
 
   useEffect(() => {
     if (initialData) {
+      // Ensure all fields have defined values when editing
       setFormData({
+        ...defaultFormData,
         ...initialData,
         date: dayjs(initialData.date),
-        amount: Math.abs(initialData.amount)
+        amount: Math.abs(initialData.amount),
+        // Ensure these fields are never undefined
+        categoryId: initialData.categoryId || '',
+        toAccountId: initialData.toAccountId || '',
+        description: initialData.description || '',
+        location: initialData.location || ''
       });
     } else {
-      // Reset form when opening for new transaction
-      setFormData({
-        accountId: '',
-        toAccountId: '',
-        categoryId: '',
-        type: 'expense',
-        amount: '',
-        date: dayjs(),
-        description: '',
-        paymentMethod: '',
-        location: '',
-        isRecurring: false
-      });
+      resetForm();
     }
   }, [initialData, open]);
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    if (open && formRef.current) {
+      // Focus first input when dialog opens
+      const firstInput = formRef.current.querySelector('input, select');
+      if (firstInput) {
+        firstInput.focus();
+      }
+    }
+  }, [open]);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSubmit(formData);
-    handleClose();
+    try {
+      // Validate amount
+      const amount = Number(formData.amount);
+      if (isNaN(amount) || amount <= 0) {
+        throw new Error('Please enter a valid positive amount');
+      }
+
+      // Validate required fields
+      if (!formData.accountId || (!formData.categoryId && formData.type !== 'transfer')) {
+        throw new Error('Please fill in all required fields');
+      }
+
+      onSubmit(formData);
+      handleClose();
+    } catch (error) {
+      setError(error.message);
+    }
   };
 
   const handleClose = () => {
-    setFormData({
-      accountId: '',
-      toAccountId: '',
-      categoryId: '',
-      type: 'expense',
-      amount: '',
-      date: dayjs(),
-      description: '',
-      paymentMethod: '',
-      location: '',
-      isRecurring: false
-    });
+    resetForm();
     onClose();
   };
 
   const filteredCategories = useMemo(() => {
+    if (!categories || categories.length === 0) return [];
+    
+    // For transfer type, don't show categories
+    if (formData.type === 'transfer') return [];
+    
+    // Filter categories based on transaction type
     return categories.filter(category => 
-      formData.type !== 'transfer' && category.type === formData.type
+      category.type === formData.type
     );
   }, [categories, formData.type]);
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <form onSubmit={handleSubmit}>
+    <Dialog 
+      open={open} 
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      disableEnforceFocus
+    >
+      <form ref={formRef} onSubmit={handleSubmit}>
         <DialogTitle>
           {initialData ? 'Edit Transaction' : 'New Transaction'}
         </DialogTitle>
@@ -145,7 +177,7 @@ const TransactionForm = ({ open, onClose, onSubmit, accounts, categories, initia
               <Select
                 value={formData.categoryId}
                 onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                required
+                required={formData.type !== 'transfer'}
               >
                 {filteredCategories.map((category) => (
                   <MenuItem key={category.categoryId} value={category.categoryId}>

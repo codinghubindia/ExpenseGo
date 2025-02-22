@@ -12,6 +12,11 @@ class ReportExport {
   };
 
   static async exportTransactions(transactions, accounts, categories, format, currency) {
+    // Check data size
+    if (transactions.length > 10000) {
+      throw new Error('Dataset too large. Please filter your data or export in smaller chunks.');
+    }
+
     const formattedData = transactions.map(transaction => ({
       date: dayjs(transaction.date).format('YYYY-MM-DD'),
       type: transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1),
@@ -23,15 +28,19 @@ class ReportExport {
       location: transaction.location || ''
     }));
 
-    switch (format) {
-      case this.FORMATS.PDF:
-        return this.exportToPDF(formattedData, currency);
-      case this.FORMATS.EXCEL:
-        return this.exportToExcel(formattedData);
-      case this.FORMATS.CSV:
-        return this.exportToCSV(formattedData);
-      default:
-        throw new Error('Unsupported export format');
+    try {
+      switch (format) {
+        case this.FORMATS.PDF:
+          return this.exportToPDF(formattedData, currency);
+        case this.FORMATS.EXCEL:
+          return this.exportToExcel(formattedData);
+        case this.FORMATS.CSV:
+          return this.exportToCSV(formattedData);
+        default:
+          throw new Error('Unsupported export format');
+      }
+    } catch (error) {
+      throw new Error(`Export failed: ${error.message}`);
     }
   }
 

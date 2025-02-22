@@ -25,46 +25,181 @@ class DatabaseService {
     }
   ];
 
+  static DEFAULT_CATEGORIES = [
+    // Expense Categories
+    {
+      name: 'Food & Dining',
+      type: 'expense',
+      icon: '🍽️',
+      colorCode: '#FF6B6B',
+      isDefault: true
+    },
+    {
+      name: 'Groceries',
+      type: 'expense',
+      icon: '🛒',
+      colorCode: '#4ECDC4',
+      isDefault: true
+    },
+    {
+      name: 'Transportation',
+      type: 'expense',
+      icon: '🚗',
+      colorCode: '#45B7D1',
+      isDefault: true
+    },
+    {
+      name: 'Shopping',
+      type: 'expense',
+      icon: '🛍️',
+      colorCode: '#96CEB4',
+      isDefault: true
+    },
+    {
+      name: 'Entertainment',
+      type: 'expense',
+      icon: '🎬',
+      colorCode: '#D4A5A5',
+      isDefault: true
+    },
+    {
+      name: 'Bills & Utilities',
+      type: 'expense',
+      icon: '📱',
+      colorCode: '#9B59B6',
+      isDefault: true
+    },
+    {
+      name: 'Health & Medical',
+      type: 'expense',
+      icon: '🏥',
+      colorCode: '#E74C3C',
+      isDefault: true
+    },
+    {
+      name: 'Education',
+      type: 'expense',
+      icon: '📚',
+      colorCode: '#3498DB',
+      isDefault: true
+    },
+    {
+      name: 'Travel',
+      type: 'expense',
+      icon: '✈️',
+      colorCode: '#2ECC71',
+      isDefault: true
+    },
+    {
+      name: 'Rent/Housing',
+      type: 'expense',
+      icon: '🏠',
+      colorCode: '#E67E22',
+      isDefault: true
+    },
+    {
+      name: 'General Expense',
+      type: 'expense',
+      icon: '📝',
+      colorCode: '#95A5A6',
+      isDefault: true
+    },
+
+    // Income Categories
+    {
+      name: 'Salary',
+      type: 'income',
+      icon: '💰',
+      colorCode: '#27AE60',
+      isDefault: true
+    },
+    {
+      name: 'Business',
+      type: 'income',
+      icon: '💼',
+      colorCode: '#2980B9',
+      isDefault: true
+    },
+    {
+      name: 'Investments',
+      type: 'income',
+      icon: '📈',
+      colorCode: '#8E44AD',
+      isDefault: true
+    },
+    {
+      name: 'Gifts',
+      type: 'income',
+      icon: '🎁',
+      colorCode: '#E91E63',
+      isDefault: true
+    },
+    {
+      name: 'Rental Income',
+      type: 'income',
+      icon: '🏘️',
+      colorCode: '#F39C12',
+      isDefault: true
+    },
+    {
+      name: 'Other Income',
+      type: 'income',
+      icon: '💵',
+      colorCode: '#16A085',
+      isDefault: true
+    }
+  ];
+
+  static PRODUCTION_CONFIG = {
+    maxRetries: 3,
+    retryDelay: 1000,
+    batchSize: 100,
+    maxTransactions: 1000
+  };
+
   static handleError(error, context) {
-    // In production, you might want to log to a service like Sentry
-    if (process.env.NODE_ENV !== 'production') {
-      // eslint-disable-next-line no-console
-      console.error(`${context}:`, error);
+    // Remove development logging
+    if (process.env.NODE_ENV === 'production') {
+      // In production, you might want to send to error tracking service
+      // e.g., Sentry, LogRocket, etc.
     }
     throw error;
   }
 
-  static async initializeDatabase() {
+  static async initializeDatabase(retryCount = this.PRODUCTION_CONFIG.maxRetries) {
     try {
-      if (this.db) {
-        return;
-      }
+      if (!this.db) {
+        const SQL = await initSqlJs({
+          locateFile: file => `https://sql.js.org/dist/${file}`
+        });
 
-      const SQL = await initSqlJs({
-        locateFile: file => `https://sql.js.org/dist/${file}`
-      });
-
-      this.idb = await openDB(this.IDB_NAME, this.DATABASE_VERSION, {
-        upgrade(db) {
-          if (!db.objectStoreNames.contains(DatabaseService.IDB_STORE_NAME)) {
-            db.createObjectStore(DatabaseService.IDB_STORE_NAME);
+        this.idb = await openDB(this.IDB_NAME, this.DATABASE_VERSION, {
+          upgrade(db) {
+            if (!db.objectStoreNames.contains(DatabaseService.IDB_STORE_NAME)) {
+              db.createObjectStore(DatabaseService.IDB_STORE_NAME);
+            }
           }
+        });
+
+        const existingDB = await this.loadFromIndexedDB();
+        
+        if (existingDB) {
+          this.db = new SQL.Database(existingDB);
+        } else {
+          this.db = new SQL.Database();
+          await this.createInitialSchema();
+          await this.initializeDefaultData();
         }
-      });
 
-      const existingDB = await this.loadFromIndexedDB();
-      
-      if (existingDB) {
-        this.db = new SQL.Database(existingDB);
-      } else {
-        this.db = new SQL.Database();
-        await this.createInitialSchema();
-        await this.initializeDefaultData();
+        await this.saveToIndexedDB();
       }
-
-      await this.saveToIndexedDB();
+      return true;
     } catch (error) {
-      this.handleError(error, 'Database initialization failed');
+      if (retryCount > 0) {
+        await new Promise(resolve => setTimeout(resolve, this.PRODUCTION_CONFIG.retryDelay));
+        return this.initializeDatabase(retryCount - 1);
+      }
+      throw new Error(`Database initialization failed after ${this.PRODUCTION_CONFIG.maxRetries} attempts`);
     }
   }
 
@@ -267,54 +402,52 @@ class DatabaseService {
 
   static async createDefaultCategories(bankId, year) {
     try {
-      const defaultCategories = [
-        // Income categories
-        { name: 'Salary', type: 'income', icon: '💰', colorCode: '#4CAF50' },
-        { name: 'Investment', type: 'income', icon: '📈', colorCode: '#2196F3' },
-        { name: 'Other Income', type: 'income', icon: '💵', colorCode: '#9C27B0' },
-
-        // Expense categories
-        { name: 'Food & Dining', type: 'expense', icon: '🍽️', colorCode: '#F44336' },
-        { name: 'Transportation', type: 'expense', icon: '🚗', colorCode: '#FF9800' },
-        { name: 'Shopping', type: 'expense', icon: '🛒', colorCode: '#E91E63' },
-        { name: 'Bills & Utilities', type: 'expense', icon: '📱', colorCode: '#3F51B5' },
-        { name: 'Healthcare', type: 'expense', icon: '🏥', colorCode: '#009688' },
-        { name: 'Entertainment', type: 'expense', icon: '🎬', colorCode: '#673AB7' },
-        { name: 'Other Expenses', type: 'expense', icon: '📝', colorCode: '#795548' }
-      ];
-
-      // Check if default categories already exist
-      const existing = await this.db.exec(`
-        SELECT name, type FROM categories_${bankId}_${year}
-        WHERE is_default = 1
+      const tableName = `categories_${bankId}_${year}`;
+      
+      // Check if table exists
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          category_id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL,
+          parent_category_id INTEGER,
+          color_code TEXT,
+          icon TEXT,
+          is_default INTEGER DEFAULT 0,
+          created_at TIMESTAMP,
+          updated_at TIMESTAMP,
+          FOREIGN KEY (parent_category_id) REFERENCES ${tableName}(category_id)
+        )
       `);
 
-      const existingCategories = existing[0]?.values?.map(([name, type]) => ({ name, type })) || [];
+      // Insert default categories if they don't exist
+      for (const defaultCategory of this.DEFAULT_CATEGORIES) {
+        const exists = await this.db.exec(`
+          SELECT category_id FROM ${tableName}
+          WHERE name = ? AND type = ? AND is_default = 1
+        `, [defaultCategory.name, defaultCategory.type]);
 
-      // Only insert categories that don't exist
-      for (const category of defaultCategories) {
-        const exists = existingCategories.some(
-          ec => ec.name === category.name && ec.type === category.type
-        );
-
-        if (!exists) {
+        if (!exists[0]?.values?.length) {
           await this.db.exec(`
-            INSERT INTO categories_${bankId}_${year} 
-            (name, type, icon, color_code, is_default, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?)
+            INSERT INTO ${tableName} (
+              name,
+              type,
+              color_code,
+              icon,
+              is_default,
+              created_at,
+              updated_at
+            ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
           `, [
-            category.name,
-            category.type,
-            category.icon,
-            category.colorCode,
-            dayjs().format('YYYY-MM-DD HH:mm:ss'),
-            dayjs().format('YYYY-MM-DD HH:mm:ss')
+            defaultCategory.name,
+            defaultCategory.type,
+            defaultCategory.colorCode,
+            defaultCategory.icon
           ]);
         }
       }
 
       await this.saveToIndexedDB();
-      return true;
     } catch (error) {
       this.handleError(error, 'Error creating default categories');
     }
@@ -520,88 +653,301 @@ class DatabaseService {
   }
 
   // Transaction Operations
-  static async createTransaction(bankId, year, transaction) {
+  static async validateTransactionData(transactionData, bankId, year) {
+    if (!transactionData.accountId) {
+      throw new Error('Please select an account');
+    }
+
+    if (!transactionData.type) {
+      throw new Error('Please select a transaction type');
+    }
+
+    const amount = Number(transactionData.amount);
+    if (isNaN(amount) || amount === 0) {
+      throw new Error('Please enter a valid amount');
+    }
+
+    // Check for sufficient balance for expenses and transfers
+    if (transactionData.type.toLowerCase() === 'expense' || transactionData.type.toLowerCase() === 'transfer') {
+      try {
+        const currentBalance = await this.getAccountBalance(bankId, year, transactionData.accountId);
+        if (Math.abs(amount) > currentBalance) {
+          throw new Error(`Insufficient balance in account. Available balance: ${this.formatCurrency(currentBalance)}`);
+        }
+      } catch (error) {
+        if (error.message.includes('Account not found')) {
+          throw new Error('Selected account not found. Please choose a valid account');
+        }
+        throw error;
+      }
+    }
+
+    if (transactionData.type === 'transfer' && !transactionData.toAccountId) {
+      throw new Error('Please select a destination account for the transfer');
+    }
+
+    if (transactionData.type !== 'transfer' && !transactionData.categoryId) {
+      throw new Error('Please select a category');
+    }
+
+    return true;
+  }
+
+  // Helper method to format currency
+  static formatCurrency(amount) {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR'
+    }).format(amount);
+  }
+
+  static async updateTransaction(bankId, year, transactionId, transactionData) {
+    let transactionStarted = false;
     try {
+      await this.initializeDatabase();
+      const tableName = `transactions_${bankId}_${year}`;
+
+      // Get the old transaction details first
+      const oldResult = await this.db.exec(`
+        SELECT account_id, to_account_id, type, amount
+        FROM ${tableName}
+        WHERE transaction_id = ?
+      `, [transactionId]);
+
+      if (!oldResult[0]?.values?.length) {
+        throw new Error('Transaction not found');
+      }
+
+      const [oldAccountId, oldToAccountId, oldType, oldAmount] = oldResult[0].values[0];
+
+      // Start transaction after getting old details
+      await this.db.exec('BEGIN TRANSACTION');
+      transactionStarted = true;
+
+      try {
+        // Reverse the old transaction's effect on account balances
+        if (oldType === 'transfer' && oldToAccountId) {
+          await this.updateAccountBalance(bankId, year, oldAccountId, Math.abs(oldAmount));
+          await this.updateAccountBalance(bankId, year, oldToAccountId, -Math.abs(oldAmount));
+        } else if (oldType === 'expense') {
+          await this.updateAccountBalance(bankId, year, oldAccountId, Math.abs(oldAmount));
+        } else if (oldType === 'income') {
+          await this.updateAccountBalance(bankId, year, oldAccountId, -Math.abs(oldAmount));
+        }
+
+        // Format new transaction data
+        const newAmount = transactionData.type.toLowerCase() === 'expense' ? 
+          -Math.abs(Number(transactionData.amount)) : 
+          Math.abs(Number(transactionData.amount));
+
+        // Update the transaction
+        await this.db.exec(`
+          UPDATE ${tableName}
+          SET account_id = ?,
+              to_account_id = ?,
+              category_id = ?,
+              type = ?,
+              amount = ?,
+              date = ?,
+              description = ?,
+              payment_method = ?,
+              location = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE transaction_id = ?
+        `, [
+          transactionData.accountId,
+          transactionData.toAccountId || null,
+          transactionData.type === 'transfer' ? null : transactionData.categoryId,
+          transactionData.type,
+          newAmount,
+          dayjs(transactionData.date).format('YYYY-MM-DD'),
+          transactionData.description || '',
+          transactionData.paymentMethod || '',
+          transactionData.location || '',
+          transactionId
+        ]);
+
+        // Apply new transaction's effect on account balances
+        await this.updateAccountBalance(bankId, year, transactionData.accountId, newAmount);
+
+        if (transactionData.type === 'transfer' && transactionData.toAccountId) {
+          await this.updateAccountBalance(bankId, year, transactionData.toAccountId, Math.abs(newAmount));
+        }
+
+        // Commit and save
+        await this.db.exec('COMMIT');
+        transactionStarted = false;
+        await this.saveToIndexedDB();
+
+        // Return updated transaction data
+        return {
+          transactionId,
+          ...transactionData,
+          amount: newAmount
+        };
+      } catch (error) {
+        if (transactionStarted) {
+          await this.db.exec('ROLLBACK');
+        }
+        throw error;
+      }
+    } catch (error) {
+      if (transactionStarted) {
+        await this.db.exec('ROLLBACK');
+      }
+      this.handleError(error, 'Error updating transaction');
+      throw error;
+    }
+  }
+
+  static async deleteTransaction(bankId, year, transactionId) {
+    let transaction = null;
+    try {
+      await this.initializeDatabase();
+      const tableName = `transactions_${bankId}_${year}`;
+
+      // Get transaction details before starting transaction
+      const result = await this.db.exec(`
+        SELECT type, amount, account_id, to_account_id
+        FROM ${tableName}
+        WHERE transaction_id = ?
+      `, [transactionId]);
+
+      if (!result[0]?.values?.length) {
+        throw new Error('Transaction not found');
+      }
+
+      const [type, amount, accountId, toAccountId] = result[0].values[0];
+      const transactionAmount = Number(amount); // Keep the sign as stored
+
+      // Start transaction after getting details
+      await this.db.exec('BEGIN TRANSACTION');
+      transaction = true;
+
+      try {
+        // Reverse the balance changes based on transaction type
+        await this.updateAccountBalance(bankId, year, accountId, -transactionAmount); // Reverse the original effect
+
+        if (type === 'transfer' && toAccountId) {
+          await this.updateAccountBalance(bankId, year, toAccountId, -transactionAmount); // Reverse transfer effect
+        }
+
+        // Delete the transaction
+        await this.db.exec(`
+          DELETE FROM ${tableName}
+          WHERE transaction_id = ?
+        `, [transactionId]);
+
+        await this.db.exec('COMMIT');
+        transaction = null;
+        await this.saveToIndexedDB();
+        return true;
+      } catch (error) {
+        if (transaction) {
+          await this.db.exec('ROLLBACK');
+        }
+        throw error;
+      }
+    } catch (error) {
+      if (transaction) {
+        await this.db.exec('ROLLBACK');
+      }
+      this.handleError(error, 'Error deleting transaction');
+      throw error;
+    }
+  }
+
+  static async createTransaction(bankId, year, transactionData) {
+    let db = null;
+    try {
+      await this.validateTransactionData(transactionData, bankId, year);
       await this.initializeDatabase();
       await this.createBankYearTables(bankId, year);
       const tableName = `transactions_${bankId}_${year}`;
 
-      // Format transaction data
-      const transactionData = {
-        transaction_id: transaction.transactionId || Date.now(),
-        type: transaction.type || 'expense',
-        amount: Number(transaction.amount || 0),
-        date: dayjs(transaction.date).format('YYYY-MM-DD'),
-        account_id: parseInt(transaction.accountId || transaction.account_id, 10),
-        to_account_id: transaction.toAccountId || transaction.to_account_id ? 
-          parseInt(transaction.toAccountId || transaction.to_account_id, 10) : null,
-        category_id: parseInt(transaction.categoryId || transaction.category_id, 10),
-        description: transaction.description || '',
-        payment_method: transaction.paymentMethod || transaction.payment_method || 'cash',
-        location: transaction.location || '',
-        notes: transaction.notes || '',
-        tags: JSON.stringify(transaction.tags || []),
-        attachments: JSON.stringify(transaction.attachments || []),
+      // Format transaction data first
+      const formattedData = {
+        transaction_id: transactionData.transactionId || Date.now(),
+        type: transactionData.type || 'expense',
+        amount: transactionData.type.toLowerCase() === 'expense' ? 
+          -Math.abs(Number(transactionData.amount)) : 
+          Math.abs(Number(transactionData.amount)),
+        date: dayjs(transactionData.date).format('YYYY-MM-DD'),
+        account_id: parseInt(transactionData.accountId, 10),
+        to_account_id: transactionData.toAccountId ? parseInt(transactionData.toAccountId, 10) : null,
+        category_id: transactionData.categoryId ? parseInt(transactionData.categoryId, 10) : null,
+        description: transactionData.description || '',
+        payment_method: transactionData.paymentMethod || 'cash',
+        location: transactionData.location || '',
+        notes: transactionData.notes || '',
+        tags: JSON.stringify(transactionData.tags || []),
+        attachments: JSON.stringify(transactionData.attachments || []),
         created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
         updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
       };
 
-      // Create SQL query
-      const columns = Object.keys(transactionData).join(', ');
-      const placeholders = Object.keys(transactionData).map(() => '?').join(', ');
-      const values = Object.values(transactionData);
+      // Create a new database connection for this transaction
+      db = this.db;
 
-      // Insert transaction
-      await this.db.exec(`
-        INSERT INTO ${tableName} (${columns})
-        VALUES (${placeholders})
-      `, values);
+      // Start transaction
+      await db.exec('BEGIN TRANSACTION');
 
-      // Update account balances
-      if (transaction.type === 'expense') {
-        await this.updateAccountBalance(bankId, year, transaction.accountId, -transaction.amount);
-      } else if (transaction.type === 'income') {
-        await this.updateAccountBalance(bankId, year, transaction.accountId, transaction.amount);
-      } else if (transaction.type === 'transfer' && transaction.toAccountId) {
-        await this.updateAccountBalance(bankId, year, transaction.accountId, -transaction.amount);
-        await this.updateAccountBalance(bankId, year, transaction.toAccountId, transaction.amount);
+      try {
+        // Update account balance
+        await this.updateAccountBalance(bankId, year, transactionData.accountId, formattedData.amount);
+
+        // Handle transfers
+        if (transactionData.type === 'transfer' && transactionData.toAccountId) {
+          await this.updateAccountBalance(bankId, year, transactionData.toAccountId, Math.abs(formattedData.amount));
+        }
+
+        // Insert transaction
+        const columns = Object.keys(formattedData).join(', ');
+        const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
+        const values = Object.values(formattedData);
+
+        await db.exec(`
+          INSERT INTO ${tableName} (${columns})
+          VALUES (${placeholders})
+        `, values);
+
+        // Commit transaction
+        await db.exec('COMMIT');
+
+        // Save to IndexedDB after successful commit
+        await this.saveToIndexedDB();
+        return formattedData.transaction_id;
+
+      } catch (error) {
+        // Rollback on error
+        if (db) {
+          try {
+            await db.exec('ROLLBACK');
+          } catch (rollbackError) {
+            console.error('Rollback failed:', rollbackError);
+          }
+        }
+        throw error;
       }
-
-      await this.saveToIndexedDB();
-      return transactionData.transaction_id;
     } catch (error) {
       this.handleError(error, 'Error creating transaction');
+      throw error;
     }
   }
 
   static async getTransactions(bankId, year, filters = {}) {
     try {
       await this.initializeDatabase();
-      
+      const tableName = `transactions_${bankId}_${year}`;
+
       let query = `
         SELECT 
-          t.transaction_id,
-          t.type,
-          t.amount,
-          t.date,
-          t.account_id,
-          t.to_account_id,
-          t.category_id,
-          t.description,
-          t.payment_method,
-          t.location,
-          t.notes,
-          t.tags,
-          t.attachments,
-          t.created_at,
-          t.updated_at,
+          t.*,
           a.name as account_name,
-          c.name as category_name,
-          ta.name as to_account_name
-        FROM transactions_${bankId}_${year} t
+          c.name as category_name
+        FROM ${tableName} t
         LEFT JOIN accounts_${bankId}_${year} a ON t.account_id = a.account_id
         LEFT JOIN categories_${bankId}_${year} c ON t.category_id = c.category_id
-        LEFT JOIN accounts_${bankId}_${year} ta ON t.to_account_id = ta.account_id
         WHERE 1=1
       `;
 
@@ -635,167 +981,20 @@ class DatabaseService {
       query += ` ORDER BY t.date DESC, t.transaction_id DESC`;
 
       const result = await this.db.exec(query, params);
+      
+      if (!result[0]?.values) return [];
 
-      return result[0]?.values.map(row => ({
-        transactionId: row[0],
-        type: row[1],
-        amount: Number(row[2]),
-        date: row[3],
-        accountId: row[4],
-        toAccountId: row[5],
-        categoryId: row[6],
-        description: row[7],
-        paymentMethod: row[8],
-        location: row[9],
-        notes: row[10],
-        tags: this.parseJSONSafely(row[11]),
-        attachments: this.parseJSONSafely(row[12]),
-        createdAt: row[13],
-        updatedAt: row[14],
-        accountName: row[15],
-        categoryName: row[16],
-        toAccountName: row[17]
-      })) || [];
+      return result[0].values.map(row => {
+        const mappedRow = this.mapTransactionRow(row);
+        // Ensure amount is negative for expenses
+        if (mappedRow.type === 'expense' && mappedRow.amount > 0) {
+          mappedRow.amount = -mappedRow.amount;
+        }
+        return mappedRow;
+      });
     } catch (error) {
       this.handleError(error, 'Error getting transactions');
-    }
-  }
-
-  static async deleteTransaction(bankId, year, transactionId) {
-    try {
-      await this.initializeDatabase();
-      await this.db.exec('BEGIN TRANSACTION');
-
-      try {
-        // Get the transaction details before deleting
-        const result = await this.db.exec(`
-          SELECT account_id, to_account_id, type, amount
-          FROM transactions_${bankId}_${year}
-          WHERE transaction_id = ?
-        `, [transactionId]);
-
-        if (!result[0]?.values?.length) {
-          throw new Error('Transaction not found');
-        }
-
-        const [accountId, toAccountId, type, amount] = result[0].values[0];
-
-        // Reverse the account balance changes
-        if (type === 'transfer' && toAccountId) {
-          await this.updateAccountBalance(bankId, year, accountId, Math.abs(amount));
-          await this.updateAccountBalance(bankId, year, toAccountId, -Math.abs(amount));
-        } else {
-          await this.updateAccountBalance(bankId, year, accountId, -amount);
-        }
-
-        // Delete the transaction
-        await this.db.exec(`
-          DELETE FROM transactions_${bankId}_${year}
-          WHERE transaction_id = ?
-        `, [transactionId]);
-
-        await this.db.exec('COMMIT');
-        await this.saveToIndexedDB();
-      } catch (error) {
-        await this.db.exec('ROLLBACK');
-        throw error;
-      }
-    } catch (error) {
-      this.handleError(error, 'Error deleting transaction');
-    }
-  }
-
-  static async updateTransaction(bankId, year, transactionId, transactionData) {
-    try {
-      await this.initializeDatabase();
-      await this.db.exec('BEGIN TRANSACTION');
-
-      try {
-        // Get the old transaction details
-        const oldResult = await this.db.exec(`
-          SELECT account_id, to_account_id, type, amount
-          FROM transactions_${bankId}_${year}
-          WHERE transaction_id = ?
-        `, [transactionId]);
-
-        if (!oldResult[0]?.values?.length) {
-          throw new Error('Transaction not found');
-        }
-
-        const [oldAccountId, oldToAccountId, oldType, oldAmount] = oldResult[0].values[0];
-
-        // Reverse the old transaction's effect on account balances
-        if (oldType === 'transfer' && oldToAccountId) {
-          await this.updateAccountBalance(bankId, year, oldAccountId, Math.abs(oldAmount));
-          await this.updateAccountBalance(bankId, year, oldToAccountId, -Math.abs(oldAmount));
-        } else if (oldType === 'expense') {
-          await this.updateAccountBalance(bankId, year, oldAccountId, Math.abs(oldAmount));
-        } else if (oldType === 'income') {
-          await this.updateAccountBalance(bankId, year, oldAccountId, -Math.abs(oldAmount));
-        }
-
-        // Update the transaction
-        const {
-          accountId,
-          toAccountId,
-          categoryId,
-          type,
-          amount,
-          date,
-          description,
-          paymentMethod,
-          location
-        } = transactionData;
-
-        const dateStr = dayjs(date).format('YYYY-MM-DD HH:mm:ss');
-        const actualCategoryId = type === 'transfer' ? null : categoryId;
-        const actualAmount = type === 'expense' ? -Math.abs(amount) : Math.abs(amount);
-
-        // Remove is_recurring from the UPDATE query
-        await this.db.exec(`
-          UPDATE transactions_${bankId}_${year}
-          SET account_id = ?,
-              to_account_id = ?,
-              category_id = ?,
-              type = ?,
-              amount = ?,
-              date = ?,
-              description = ?,
-              payment_method = ?,
-              location = ?,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE transaction_id = ?
-        `, [
-          accountId,
-          toAccountId || null,
-          actualCategoryId,
-          type,
-          actualAmount,
-          dateStr,
-          description || '',
-          paymentMethod || '',
-          location || '',
-          transactionId
-        ]);
-
-        // Apply the new transaction's effect on account balances
-        if (type === 'transfer' && toAccountId) {
-          await this.updateAccountBalance(bankId, year, accountId, -Math.abs(amount));
-          await this.updateAccountBalance(bankId, year, toAccountId, Math.abs(amount));
-        } else if (type === 'expense') {
-          await this.updateAccountBalance(bankId, year, accountId, -Math.abs(amount));
-        } else if (type === 'income') {
-          await this.updateAccountBalance(bankId, year, accountId, Math.abs(amount));
-        }
-
-        await this.db.exec('COMMIT');
-        await this.saveToIndexedDB();
-      } catch (error) {
-        await this.db.exec('ROLLBACK');
-        throw error;
-      }
-    } catch (error) {
-      this.handleError(error, 'Error updating transaction');
+      return [];
     }
   }
 
@@ -822,16 +1021,18 @@ class DatabaseService {
   static mapTransactionRow(row) {
     const [
       transactionId,
-      accountId,
-      toAccountId,
-      categoryId,
       type,
       amount,
       date,
+      accountId,
+      toAccountId,
+      categoryId,
       description,
       paymentMethod,
       location,
-      isRecurring,
+      notes,
+      tags,
+      attachments,
       createdAt,
       updatedAt,
       accountName,
@@ -840,16 +1041,19 @@ class DatabaseService {
 
     return {
       transactionId,
+      type: String(type),
+      // Keep the sign of the amount as stored in the database
+      amount: Number(amount),
+      date: dayjs(date),
       accountId,
       toAccountId,
       categoryId,
-      type: String(type),
-      amount: Number(amount),
-      date: dayjs(date),
       description,
       paymentMethod,
       location,
-      isRecurring: Boolean(isRecurring),
+      notes,
+      tags: this.parseJSONSafely(tags),
+      attachments: this.parseJSONSafely(attachments),
       createdAt,
       updatedAt,
       accountName,
@@ -859,15 +1063,30 @@ class DatabaseService {
 
   static async updateAccountBalance(bankId, year, accountId, amount) {
     try {
+      // Get current balance first
+      const result = await this.db.exec(`
+        SELECT current_balance 
+        FROM accounts_${bankId}_${year}
+        WHERE account_id = ?
+      `, [accountId]);
+
+      if (!result[0]?.values?.length) {
+        throw new Error('Account not found');
+      }
+
+      const currentBalance = Number(result[0].values[0][0]);
+      const newBalance = currentBalance + Number(amount);
+
       await this.db.exec(`
         UPDATE accounts_${bankId}_${year}
-        SET 
-          current_balance = current_balance + ?,
-          updated_at = ?
+        SET current_balance = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE account_id = ?
-      `, [amount, dayjs().format('YYYY-MM-DD HH:mm:ss'), accountId]);
+      `, [newBalance, accountId]);
+
     } catch (error) {
       this.handleError(error, 'Error updating account balance');
+      throw error;
     }
   }
 
@@ -968,23 +1187,30 @@ class DatabaseService {
     try {
       await this.initializeDatabase();
       
+      // Ensure tables and default data exist
+      await this.createBankYearTables(bankId, year);
+      await this.createDefaultCategories(bankId, year);
+
       const result = await this.db.exec(`
-        SELECT DISTINCT
-          category_id,
+        SELECT 
+          category_id as categoryId,
           name,
           type,
-          parent_category_id,
-          color_code,
+          parent_category_id as parentCategoryId,
+          color_code as colorCode,
           icon,
-          is_default,
-          created_at,
-          updated_at
+          is_default as isDefault,
+          created_at as createdAt,
+          updated_at as updatedAt
         FROM categories_${bankId}_${year}
-        GROUP BY name, type
-        ORDER BY name
+        ORDER BY name ASC
       `);
 
-      return result[0]?.values.map(row => ({
+      if (!result[0]?.values) {
+        return [];
+      }
+
+      return result[0].values.map(row => ({
         categoryId: row[0],
         name: row[1],
         type: row[2],
@@ -994,9 +1220,10 @@ class DatabaseService {
         isDefault: Boolean(row[6]),
         createdAt: row[7],
         updatedAt: row[8]
-      })) || [];
+      }));
     } catch (error) {
       this.handleError(error, 'Error getting categories');
+      return [];
     }
   }
 
@@ -1156,46 +1383,63 @@ class DatabaseService {
     try {
       if (!transaction) throw new Error('Transaction data is required');
 
+      await this.initializeDatabase();
       await this.createBankYearTables(bankId, year);
       const tableName = `transactions_${bankId}_${year}`;
-      
+
+      // Format transaction data first
       const transactionData = {
-        transaction_id: transaction.transactionId || transaction.transaction_id || Date.now(),
+        transaction_id: transaction.transactionId || Date.now(),
         type: transaction.type || 'expense',
-        amount: Number(transaction.amount || 0),
+        // For expenses, store as negative value, for others keep as is
+        amount: transaction.type.toLowerCase() === 'expense' ? 
+          -Math.abs(Number(transaction.amount || 0)) : 
+          Math.abs(Number(transaction.amount || 0)),
         date: dayjs(transaction.date).format('YYYY-MM-DD'),
-        account_id: parseInt(transaction.accountId || transaction.account_id, 10),
-        to_account_id: transaction.toAccountId || transaction.to_account_id ? 
-          parseInt(transaction.toAccountId || transaction.to_account_id, 10) : null,
-        category_id: parseInt(transaction.categoryId || transaction.category_id, 10),
+        account_id: parseInt(transaction.accountId, 10),
+        to_account_id: transaction.toAccountId ? parseInt(transaction.toAccountId, 10) : null,
+        category_id: transaction.categoryId ? parseInt(transaction.categoryId, 10) : null,
         description: transaction.description || '',
-        payment_method: transaction.paymentMethod || transaction.payment_method || 'cash',
+        payment_method: transaction.paymentMethod || 'cash',
         location: transaction.location || '',
         notes: transaction.notes || '',
         tags: JSON.stringify(transaction.tags || []),
         attachments: JSON.stringify(transaction.attachments || []),
-        created_at: dayjs(transaction.createdAt || transaction.created_at).format('YYYY-MM-DD HH:mm:ss'),
-        updated_at: dayjs(transaction.updatedAt || transaction.updated_at).format('YYYY-MM-DD HH:mm:ss')
+        created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
       };
 
-      const columns = Object.keys(transactionData).join(', ');
-      const placeholders = Object.keys(transactionData).map(() => '?').join(', ');
-      const values = Object.values(transactionData);
-
-      const query = `
-        INSERT OR REPLACE INTO ${tableName} (${columns})
-        VALUES (${placeholders})
-      `;
+      await this.db.exec('BEGIN TRANSACTION');
 
       try {
-        await this.db.exec(query, values);
+        // Update account balance
+        await this.updateAccountBalance(bankId, year, transaction.accountId, transactionData.amount);
+
+        // Handle transfers
+        if (transaction.type.toLowerCase() === 'transfer' && transaction.toAccountId) {
+          await this.updateAccountBalance(bankId, year, transaction.toAccountId, Math.abs(transactionData.amount));
+        }
+
+        // Insert transaction
+        const columns = Object.keys(transactionData).join(', ');
+        const placeholders = Object.keys(transactionData).map(() => '?').join(', ');
+        const values = Object.values(transactionData);
+
+        await this.db.exec(`
+          INSERT INTO ${tableName} (${columns})
+          VALUES (${placeholders})
+        `, values);
+
+        await this.db.exec('COMMIT');
         await this.saveToIndexedDB();
-        return true;
+        return transactionData.transaction_id;
       } catch (error) {
-        this.handleError(error, 'SQL Error');
+        await this.db.exec('ROLLBACK');
+        throw error;
       }
     } catch (error) {
       this.handleError(error, 'Error adding transaction');
+      throw error;
     }
   }
 
@@ -1405,42 +1649,152 @@ class DatabaseService {
   static async createDefaultAccounts(bankId, year) {
     try {
       for (const defaultAccount of this.DEFAULT_ACCOUNTS) {
-        // Check if default account exists
-        const exists = await this.db.exec(`
-          SELECT account_id FROM accounts_${bankId}_${year}
-          WHERE name = ? AND is_default = 1
-        `, [defaultAccount.name]);
+        try {
+          // Check if default account exists
+          const exists = await this.db.exec(`
+            SELECT account_id FROM accounts_${bankId}_${year}
+            WHERE name = ? AND is_default = 1
+          `, [defaultAccount.name]);
 
-        if (!exists[0]?.values?.length) {
-          await this.db.exec(`
-            INSERT INTO accounts_${bankId}_${year} (
-              name,
-              type,
-              currency,
-              initial_balance,
-              current_balance,
-              color_code,
-              icon,
-              notes,
-              is_default,
-              created_at,
-              updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-          `, [
-            defaultAccount.name,
-            defaultAccount.type,
-            defaultAccount.currency,
-            defaultAccount.initialBalance,
-            defaultAccount.currentBalance,
-            defaultAccount.colorCode,
-            defaultAccount.icon,
-            defaultAccount.notes
-          ]);
+          if (!exists[0]?.values?.length) {
+            await this.db.exec(`
+              INSERT INTO accounts_${bankId}_${year} (
+                name,
+                type,
+                currency,
+                initial_balance,
+                current_balance,
+                color_code,
+                icon,
+                notes,
+                is_default,
+                created_at,
+                updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `, [
+              defaultAccount.name,
+              defaultAccount.type,
+              defaultAccount.currency,
+              defaultAccount.initialBalance,
+              defaultAccount.currentBalance,
+              defaultAccount.colorCode,
+              defaultAccount.icon,
+              defaultAccount.notes
+            ]);
+          }
+        } catch (error) {
+          this.handleError(error, `Error creating default account: ${defaultAccount.name}`);
         }
       }
       await this.saveToIndexedDB();
     } catch (error) {
       this.handleError(error, 'Error creating default accounts');
+    }
+  }
+
+  static async handleDatabaseMigration(currentVersion) {
+    try {
+      const dbVersion = await this.getDatabaseVersion();
+      
+      if (dbVersion < currentVersion) {
+        await this.db.exec('BEGIN TRANSACTION');
+        
+        try {
+          // Add migration steps here
+          if (dbVersion < 1) {
+            // Migration to version 1
+            await this.migrateToV1();
+          }
+          
+          // Update database version
+          await this.db.exec(`
+            UPDATE database_info 
+            SET version = ?
+          `, [currentVersion]);
+          
+          await this.db.exec('COMMIT');
+          await this.saveToIndexedDB();
+        } catch (error) {
+          await this.db.exec('ROLLBACK');
+          throw error;
+        }
+      }
+    } catch (error) {
+      this.handleError(error, 'Database migration failed');
+    }
+  }
+
+  static async getDatabaseVersion() {
+    try {
+      const result = await this.db.exec(`
+        SELECT version FROM database_info LIMIT 1
+      `);
+      return result[0]?.values?.[0]?.[0] || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  static async migrateToV1() {
+    // Add migration steps for version 1
+    await this.db.exec(`
+      CREATE TABLE IF NOT EXISTS database_info (
+        version INTEGER PRIMARY KEY
+      );
+      INSERT OR IGNORE INTO database_info (version) VALUES (0);
+    `);
+  }
+
+  // Add batch processing for large datasets
+  static async processBatch(items, processFunc) {
+    const batchSize = this.PRODUCTION_CONFIG.batchSize;
+    for (let i = 0; i < items.length; i += batchSize) {
+      const batch = items.slice(i, i + batchSize);
+      await Promise.all(batch.map(processFunc));
+    }
+  }
+
+  // Add transaction limits
+  static async validateTransactionLimit(bankId, year) {
+    const count = await this.db.exec(`
+      SELECT COUNT(*) FROM transactions_${bankId}_${year}
+    `);
+    
+    if (count[0]?.values?.[0]?.[0] >= this.PRODUCTION_CONFIG.maxTransactions) {
+      throw new Error(`Transaction limit of ${this.PRODUCTION_CONFIG.maxTransactions} reached`);
+    }
+  }
+
+  // Add method to get account balance
+  static async getAccountBalance(bankId, year, accountId) {
+    try {
+      const result = await this.db.exec(`
+        SELECT current_balance 
+        FROM accounts_${bankId}_${year}
+        WHERE account_id = ?
+      `, [accountId]);
+
+      if (!result[0]?.values?.length) {
+        throw new Error('Account not found');
+      }
+
+      return Number(result[0].values[0][0]);
+    } catch (error) {
+      this.handleError(error, 'Error getting account balance');
+      throw error;
+    }
+  }
+
+  static async checkSufficientBalance(bankId, year, accountId, amount) {
+    try {
+      const currentBalance = await this.getAccountBalance(bankId, year, accountId);
+      if (amount < 0 && Math.abs(amount) > currentBalance) {
+        throw new Error('Insufficient balance for this transaction');
+      }
+      return true;
+    } catch (error) {
+      this.handleError(error, 'Error checking balance');
+      throw error;
     }
   }
 }

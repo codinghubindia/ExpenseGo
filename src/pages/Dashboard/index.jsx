@@ -17,7 +17,10 @@ import {
   MoreVert,
   Add as AddIcon,
   ArrowUpward,
-  ArrowDownward
+  ArrowDownward,
+  AccountBalance,
+  TrendingDown,
+  Savings
 } from '@mui/icons-material';
 import {
   AreaChart,
@@ -99,6 +102,19 @@ const Dashboard = () => {
       .reduce((sum, t) => sum + Math.abs(t.amount), 0);
   };
 
+  const getMonthlySavings = () => {
+    const monthlyIncome = getMonthlyIncome();
+    const monthlyExpenses = getMonthlyExpenses();
+    return monthlyIncome - monthlyExpenses;
+  };
+
+  const getSavingsRate = () => {
+    const monthlyIncome = getMonthlyIncome();
+    const monthlyExpenses = getMonthlyExpenses();
+    if (monthlyIncome === 0) return 0;
+    return ((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100;
+  };
+
   const getActivityProgress = () => {
     const today = new Date().getDate();
     const daysInMonth = new Date(currentYear, new Date().getMonth() + 1, 0).getDate();
@@ -145,6 +161,102 @@ const Dashboard = () => {
     '#D4A5A5', '#9B6B6B', '#E9D985', '#556270', '#6C5B7B'
   ];
 
+  const totalBalance = getTotalBalance();
+  const monthlyIncome = getMonthlyIncome();
+  const monthlyExpenses = getMonthlyExpenses();
+  const monthlySavings = getMonthlySavings();
+  const savingsRate = getSavingsRate();
+
+  const getLastMonthBalance = () => {
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    
+    return transactions
+      .filter(t => {
+        const txDate = new Date(t.date);
+        return txDate.getMonth() === lastMonth.getMonth() && 
+               txDate.getFullYear() === lastMonth.getFullYear();
+      })
+      .reduce((sum, t) => {
+        if (t.type === 'income') return sum + t.amount;
+        if (t.type === 'expense') return sum - Math.abs(t.amount);
+        return sum;
+      }, 0);
+  };
+
+  const calculatePercentageChange = (current, previous) => {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return ((current - previous) / Math.abs(previous)) * 100;
+  };
+
+  const lastMonthBalance = getLastMonthBalance();
+  const percentageChange = calculatePercentageChange(totalBalance, lastMonthBalance);
+  const isPositiveChange = percentageChange >= 0;
+
+  const getLastMonthIncome = () => {
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    
+    return transactions
+      .filter(t => {
+        const txDate = new Date(t.date);
+        return t.type === 'income' && 
+               txDate.getMonth() === lastMonth.getMonth() && 
+               txDate.getFullYear() === lastMonth.getFullYear();
+      })
+      .reduce((sum, t) => sum + t.amount, 0);
+  };
+
+  const getLastMonthExpenses = () => {
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    
+    return transactions
+      .filter(t => {
+        const txDate = new Date(t.date);
+        return t.type === 'expense' && 
+               txDate.getMonth() === lastMonth.getMonth() && 
+               txDate.getFullYear() === lastMonth.getFullYear();
+      })
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  };
+
+  const lastMonthIncome = getLastMonthIncome();
+  const incomePercentageChange = calculatePercentageChange(monthlyIncome, lastMonthIncome);
+  const isIncomeUp = incomePercentageChange >= 0;
+
+  const lastMonthExpenses = getLastMonthExpenses();
+  const expensePercentageChange = calculatePercentageChange(monthlyExpenses, lastMonthExpenses);
+  const isExpensesUp = expensePercentageChange >= 0;
+
+  const summaryCards = [
+    {
+      title: "Total Balance",
+      value: formatCurrency(totalBalance),
+      icon: <AccountBalance />,
+      color: theme.palette.primary.main
+    },
+    {
+      title: "Monthly Income",
+      value: formatCurrency(monthlyIncome),
+      icon: <TrendingUp />,
+      color: theme.palette.success.main
+    },
+    {
+      title: "Monthly Expenses",
+      value: formatCurrency(monthlyExpenses),
+      icon: <TrendingDown />,
+      color: theme.palette.error.main
+    },
+    {
+      title: "Monthly Savings",
+      value: `${savingsRate}%`,
+      subtitle: `${formatCurrency(monthlySavings)} saved this month`,
+      icon: <Savings />,
+      color: theme.palette.info.main
+    }
+  ];
+
   return (
     <Box>
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -174,14 +286,14 @@ const Dashboard = () => {
                 </IconButton>
               </Box>
               <Typography variant="h4" fontWeight="bold">
-                {formatCurrency(getTotalBalance())}
+                {formatCurrency(totalBalance)}
               </Typography>
               <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
                 <Chip
-                  icon={<TrendingUp />}
-                  label="4.5% up"
+                  icon={isPositiveChange ? <TrendingUp /> : <TrendingDown />}
+                  label={`${Math.abs(percentageChange).toFixed(1)}% ${isPositiveChange ? 'up' : 'down'}`}
                   size="small"
-                  color="success"
+                  color={isPositiveChange ? 'success' : 'error'}
                   sx={{ mr: 1 }}
                 />
                 <Typography variant="caption" color="text.secondary">
@@ -199,20 +311,23 @@ const Dashboard = () => {
                 <Typography color="text.secondary" variant="subtitle2">
                   Monthly Income
                 </Typography>
-                <ArrowUpward color="success" />
+                {isIncomeUp ? <ArrowUpward color="success" /> : <ArrowDownward color="error" />}
               </Box>
               <Typography variant="h4" fontWeight="bold" color="success.main">
-                {formatCurrency(getMonthlyIncome())}
+                {formatCurrency(monthlyIncome)}
               </Typography>
-              <LinearProgress
-                variant="determinate"
-                value={70}
-                color="success"
-                sx={{ mt: 2, mb: 1 }}
-              />
-              <Typography variant="caption" color="text.secondary">
-                70% of monthly goal
-              </Typography>
+              <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
+                <Chip
+                  icon={isIncomeUp ? <TrendingUp /> : <TrendingDown />}
+                  label={`${Math.abs(incomePercentageChange).toFixed(1)}% ${isIncomeUp ? 'up' : 'down'}`}
+                  size="small"
+                  color={isIncomeUp ? 'success' : 'error'}
+                  sx={{ mr: 1 }}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  vs last month
+                </Typography>
+              </Box>
             </CardContent>
           </Card>
         </Grid>
@@ -224,20 +339,23 @@ const Dashboard = () => {
                 <Typography color="text.secondary" variant="subtitle2">
                   Monthly Expenses
                 </Typography>
-                <ArrowDownward color="error" />
+                {isExpensesUp ? <ArrowUpward color="error" /> : <ArrowDownward color="success" />}
               </Box>
               <Typography variant="h4" fontWeight="bold" color="error.main">
-                {formatCurrency(getMonthlyExpenses())}
+                {formatCurrency(monthlyExpenses)}
               </Typography>
-              <LinearProgress
-                variant="determinate"
-                value={85}
-                color="error"
-                sx={{ mt: 2, mb: 1 }}
-              />
-              <Typography variant="caption" color="text.secondary">
-                85% of monthly budget
-              </Typography>
+              <Box sx={{ mt: 2, display: 'flex', alignItems: 'center' }}>
+                <Chip
+                  icon={isExpensesUp ? <TrendingUp /> : <TrendingDown />}
+                  label={`${Math.abs(expensePercentageChange).toFixed(1)}% ${isExpensesUp ? 'up' : 'down'}`}
+                  size="small"
+                  color={isExpensesUp ? 'error' : 'success'}
+                  sx={{ mr: 1 }}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  vs last month
+                </Typography>
+              </Box>
             </CardContent>
           </Card>
         </Grid>
