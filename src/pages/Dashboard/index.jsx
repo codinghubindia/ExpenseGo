@@ -164,45 +164,88 @@ const Dashboard = () => {
   }, [currentBank, currentYear]);
 
   useEffect(() => {
-    if (!isPWACompatible) {
-      setShowInstallPrompt(false);
-      return;
-    }
+    const checkInstallable = async () => {
+      // Check if app is not already installed
+      const isInstalled = window.matchMedia('(display-mode: standalone)').matches || 
+                         window.navigator.standalone === true;
+      
+      // Check if device is compatible
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const isCompatible = 'serviceWorker' in navigator && isMobileDevice;
+
+      if (!isInstalled && isCompatible) {
+        // Store installable state in localStorage
+        localStorage.setItem('isInstallable', 'true');
+        setShowInstallPrompt(true);
+      } else {
+        localStorage.removeItem('isInstallable');
+        setShowInstallPrompt(false);
+      }
+    };
 
     const handleBeforeInstallPrompt = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
       
-      if (window.matchMedia('(display-mode: standalone)').matches) {
-        setShowInstallPrompt(false);
-        return;
+      // Show prompt if device is installable
+      if (localStorage.getItem('isInstallable')) {
+        setShowInstallPrompt(true);
       }
-
-      setShowInstallPrompt(true);
     };
 
+    // Check installable state on mount
+    checkInstallable();
+
+    // Listen for install prompt
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
-    if (window.matchMedia('(display-mode: standalone)').matches) {
+    // Listen for install status changes
+    window.addEventListener('appinstalled', () => {
+      localStorage.removeItem('isInstallable');
       setShowInstallPrompt(false);
-    }
+      setDeferredPrompt(null);
+    });
+
+    // Check if display mode changes
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    const handleDisplayModeChange = (e) => {
+      if (e.matches) {
+        localStorage.removeItem('isInstallable');
+        setShowInstallPrompt(false);
+      } else {
+        checkInstallable();
+      }
+    };
+    mediaQuery.addListener(handleDisplayModeChange);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      mediaQuery.removeListener(handleDisplayModeChange);
     };
   }, []);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
+    if (!deferredPrompt) {
+      // If no deferred prompt but installable, show native prompt
+      if (localStorage.getItem('isInstallable')) {
+        alert('To install: tap the browser menu button and select "Add to Home Screen" or "Install"');
+      }
+      return;
+    }
 
-    deferredPrompt.prompt();
-
-    const { outcome } = await deferredPrompt.userChoice;
-    
-    setDeferredPrompt(null);
-    setShowInstallPrompt(false);
-
-    console.log(`User response to the install prompt: ${outcome}`);
+    try {
+      await deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      
+      if (outcome === 'accepted') {
+        localStorage.removeItem('isInstallable');
+        setShowInstallPrompt(false);
+      }
+      
+      setDeferredPrompt(null);
+    } catch (error) {
+      console.warn('Install prompt failed:', error);
+    }
   };
 
   const formatCurrency = (amount) => {
@@ -608,37 +651,29 @@ const Dashboard = () => {
         px: { xs: 1, sm: 2, md: 3 }
       }}
     >
-      {/* Install Prompt */}
-      {showInstallPrompt && isPWACompatible && (
-        <Card
-          sx={{
-            mb: 2,
-            position: 'relative',
-            bgcolor: 'primary.soft',
-            border: '1px solid',
-            borderColor: 'primary.main',
-            borderRadius: 2,
-            overflow: 'hidden',
-            display: { md: 'none' }
-          }}
-        >
-          <CardContent sx={{ py: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <GetAppIcon color="primary" />
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="subtitle2" color="primary.main" fontWeight={500}>
+      {showInstallPrompt && (
+        <Card sx={{ mb: 3, bgcolor: 'primary.soft' }}>
+          <CardContent>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              spacing={2}
+            >
+              <Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
                   Install ExpenseGo
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="body2" color="text.secondary">
                   Add to your home screen for quick access
                 </Typography>
               </Box>
               <Stack direction="row" spacing={1}>
                 <Button
-                  size="small"
                   variant="contained"
+                  size="small"
                   onClick={handleInstallClick}
-                  startIcon={<GetAppIcon />}
+                  startIcon={<AddIcon />}
                 >
                   Install
                 </Button>
@@ -650,7 +685,7 @@ const Dashboard = () => {
                   <CloseIcon fontSize="small" />
                 </IconButton>
               </Stack>
-            </Box>
+            </Stack>
           </CardContent>
         </Card>
       )}
