@@ -92,9 +92,9 @@ const DASHBOARD_STYLES = {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 
 const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-const isPWACompatible = window.matchMedia('(display-mode: browser)').matches && 
-                       ('serviceWorker' in navigator) &&
-                       (isMobileDevice);
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+const isPWAInstalled = isStandalone || window.matchMedia('(display-mode: minimal-ui)').matches;
+const isPWACompatible = 'serviceWorker' in navigator && !isPWAInstalled;
 
 const Dashboard = () => {
   const theme = useTheme();
@@ -164,87 +164,98 @@ const Dashboard = () => {
   }, [currentBank, currentYear]);
 
   useEffect(() => {
-    const checkInstallable = async () => {
-      // Check if app is not already installed
-      const isInstalled = window.matchMedia('(display-mode: standalone)').matches || 
-                         window.navigator.standalone === true;
-      
-      // Check if device is compatible
-      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      const isCompatible = 'serviceWorker' in navigator && isMobileDevice;
-
-      if (!isInstalled && isCompatible) {
-        // Store installable state in localStorage
-        localStorage.setItem('isInstallable', 'true');
-        setShowInstallPrompt(true);
-      } else {
-        localStorage.removeItem('isInstallable');
-        setShowInstallPrompt(false);
-      }
-    };
+    // Don't show if already installed
+    if (isPWAInstalled) {
+      setShowInstallPrompt(false);
+      return;
+    }
 
     const handleBeforeInstallPrompt = (e) => {
-      e.preventDefault();
+      // Store the event for later use
       setDeferredPrompt(e);
       
-      // Show prompt if device is installable
-      if (localStorage.getItem('isInstallable')) {
+      if (isMobileDevice) {
+        // For mobile: show if not dismissed and not installed
+        if (!sessionStorage.getItem('installPromptDismissed')) {
+          setShowInstallPrompt(true);
+        }
+      } else {
+        // For desktop: show only once
+        if (!localStorage.getItem('desktopPromptShown')) {
+          setShowInstallPrompt(true);
+        }
+      }
+    };
+
+    // Initial check for showing prompt
+    if (isMobileDevice) {
+      if (!sessionStorage.getItem('installPromptDismissed') && !isPWAInstalled) {
         setShowInstallPrompt(true);
       }
-    };
+    } else if (!localStorage.getItem('desktopPromptShown')) {
+      setShowInstallPrompt(true);
+    }
 
-    // Check installable state on mount
-    checkInstallable();
-
-    // Listen for install prompt
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
-    // Listen for install status changes
+    
     window.addEventListener('appinstalled', () => {
-      localStorage.removeItem('isInstallable');
       setShowInstallPrompt(false);
       setDeferredPrompt(null);
-    });
-
-    // Check if display mode changes
-    const mediaQuery = window.matchMedia('(display-mode: standalone)');
-    const handleDisplayModeChange = (e) => {
-      if (e.matches) {
-        localStorage.removeItem('isInstallable');
-        setShowInstallPrompt(false);
+      if (isMobileDevice) {
+        sessionStorage.setItem('installPromptDismissed', 'true');
       } else {
-        checkInstallable();
+        localStorage.setItem('desktopPromptShown', 'true');
       }
-    };
-    mediaQuery.addListener(handleDisplayModeChange);
+    });
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      mediaQuery.removeListener(handleDisplayModeChange);
     };
   }, []);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) {
-      // If no deferred prompt but installable, show native prompt
-      if (localStorage.getItem('isInstallable')) {
-        alert('To install: tap the browser menu button and select "Add to Home Screen" or "Install"');
-      }
-      return;
-    }
-
     try {
-      await deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      
-      if (outcome === 'accepted') {
-        localStorage.removeItem('isInstallable');
-        setShowInstallPrompt(false);
+      if (!deferredPrompt) {
+        // If no deferred prompt, try to trigger the browser's install prompt
+        if ('serviceWorker' in navigator) {
+          const registration = await navigator.serviceWorker.ready;
+          await registration.update();
+          
+          // Create and dispatch a new beforeinstallprompt event
+          const event = new Event('beforeinstallprompt');
+          window.dispatchEvent(event);
+        }
+        return;
       }
+
+      // Show the install prompt
+      await deferredPrompt.prompt();
       
-      setDeferredPrompt(null);
+      // Wait for user choice
+      const choiceResult = await deferredPrompt.userChoice;
+      console.log('User choice:', choiceResult.outcome);
+
+      if (choiceResult.outcome === 'accepted') {
+        setShowInstallPrompt(false);
+        if (isMobileDevice) {
+          sessionStorage.setItem('installPromptDismissed', 'true');
+        } else {
+          localStorage.setItem('desktopPromptShown', 'true');
+        }
+      }
     } catch (error) {
-      console.warn('Install prompt failed:', error);
+      console.error('Installation error:', error);
+    } finally {
+      setDeferredPrompt(null);
+    }
+  };
+
+  const handleSkipInstall = () => {
+    setShowInstallPrompt(false);
+    if (isMobileDevice) {
+      sessionStorage.setItem('installPromptDismissed', 'true');
+    } else {
+      localStorage.setItem('desktopPromptShown', 'true');
     }
   };
 
@@ -368,9 +379,9 @@ const Dashboard = () => {
     lastMonth.setMonth(lastMonth.getMonth() - 1);
     
     const lastMonthTransactions = transactions.filter(t => {
-      const txDate = new Date(t.date);
-      return txDate.getMonth() === lastMonth.getMonth() && 
-             txDate.getFullYear() === lastMonth.getFullYear();
+        const txDate = new Date(t.date);
+        return txDate.getMonth() === lastMonth.getMonth() && 
+               txDate.getFullYear() === lastMonth.getFullYear();
     });
 
     const lastMonthIncome = lastMonthTransactions
@@ -438,7 +449,7 @@ const Dashboard = () => {
     const lastMonthBalance = getLastMonthBalance();
     const savingsChange = lastMonthBalance !== 0 ? 
       ((savingsAmount - lastMonthBalance) / Math.abs(lastMonthBalance)) * 100 : 0;
-
+    
     return {
       amount: savingsAmount,
       rate: Math.round(savingsRate),
@@ -652,7 +663,14 @@ const Dashboard = () => {
       }}
     >
       {showInstallPrompt && (
-        <Card sx={{ mb: 3, bgcolor: 'primary.soft' }}>
+        <Card 
+          sx={{ 
+            mb: 3, 
+            bgcolor: 'primary.soft',
+            borderRadius: 2,
+            boxShadow: 2
+          }}
+        >
           <CardContent>
             <Stack
               direction="row"
@@ -665,8 +683,20 @@ const Dashboard = () => {
                   Install ExpenseGo
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Add to your home screen for quick access
+                  {isMobileDevice 
+                    ? 'Add to your home screen for quick access'
+                    : 'Install as a desktop app for better experience'
+                  }
                 </Typography>
+                {error && (
+                  <Typography 
+                    variant="caption" 
+                    color="error" 
+                    sx={{ display: 'block', mt: 1 }}
+                  >
+                    {error}
+                  </Typography>
+                )}
               </Box>
               <Stack direction="row" spacing={1}>
                 <Button
@@ -677,13 +707,13 @@ const Dashboard = () => {
                 >
                   Install
                 </Button>
-                <IconButton
+                <Button
                   size="small"
-                  onClick={() => setShowInstallPrompt(false)}
-                  sx={{ color: 'text.secondary' }}
+                  onClick={handleSkipInstall}
+                  startIcon={<CloseIcon />}
                 >
-                  <CloseIcon fontSize="small" />
-                </IconButton>
+                  {isMobileDevice ? 'Skip' : 'Maybe Later'}
+                </Button>
               </Stack>
             </Stack>
           </CardContent>
@@ -791,7 +821,7 @@ const Dashboard = () => {
                 display: 'flex', 
                 justifyContent: 'space-between', 
                 alignItems: 'center',
-                mb: 3
+                mb: 3 
               }}>
                 <Typography 
                   variant="h6" 
@@ -950,12 +980,12 @@ const Dashboard = () => {
               <Box sx={{ 
                 display: 'flex', 
                 justifyContent: 'space-between', 
-                alignItems: 'center',
+                alignItems: 'center', 
                 mb: 2 
               }}>
                 <Typography variant="h6">Recent Activity</Typography>
-                <Button
-                  size="small"
+                <Button 
+                  size="small" 
                   onClick={() => navigate('/transactions')}
                   sx={{ textTransform: 'none' }}
                 >
@@ -1023,19 +1053,19 @@ const Dashboard = () => {
                           </Stack>
                         </Box>
                       </Box>
-                      <Typography
+                        <Typography
                         variant="subtitle2"
-                        sx={{
-                          color: transaction.type === 'income' ? 'success.main' :
-                                 transaction.type === 'expense' ? 'error.main' :
-                                 'info.main',
-                          fontWeight: 500
-                        }}
-                      >
-                        {transaction.type === 'income' ? '+' : 
-                         transaction.type === 'expense' ? '-' : ''}
-                        {formatCurrency(Math.abs(transaction.amount))}
-                      </Typography>
+                          sx={{
+                            color: transaction.type === 'income' ? 'success.main' : 
+                                   transaction.type === 'expense' ? 'error.main' : 
+                                   'info.main',
+                            fontWeight: 500
+                          }}
+                        >
+                          {transaction.type === 'income' ? '+' : 
+                           transaction.type === 'expense' ? '-' : ''}
+                          {formatCurrency(Math.abs(transaction.amount))}
+                        </Typography>
                     </Box>
                   );
                 })}

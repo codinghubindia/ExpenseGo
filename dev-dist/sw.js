@@ -67,7 +67,7 @@ if (!self.define) {
     });
   };
 }
-define(['./workbox-f6195dc0'], (function (workbox) { 'use strict';
+define(['./workbox-99d8380f'], (function (workbox) { 'use strict';
 
   self.addEventListener('message', event => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
@@ -85,20 +85,12 @@ define(['./workbox-f6195dc0'], (function (workbox) { 'use strict';
     "revision": "ccd5f4627cd3b1a8ec5260c016f8deac"
   }, {
     "url": "index.html",
-    "revision": "0.okhp543jve8"
+    "revision": "0.eu5u1fs4chg"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
     allowlist: [/^\/$/]
   }));
-  workbox.registerRoute(/^https:\/\/sql\.js\.org\/dist\/.*/i, new workbox.CacheFirst({
-    "cacheName": "sql-js-cache",
-    plugins: [new workbox.ExpirationPlugin({
-      maxEntries: 10,
-      maxAgeSeconds: 31536000
-    }), new workbox.CacheableResponsePlugin({
-      statuses: [0, 200]
-    })]
-  }), 'GET');
 
 }));
+//# sourceMappingURL=sw.js.map
