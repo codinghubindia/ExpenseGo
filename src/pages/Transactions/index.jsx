@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Container,
   Typography,
@@ -150,42 +150,154 @@ const Transactions = () => {
     }).format(amount);
   };
 
-  const getFilteredTransactions = () => {
+  const filteredTransactions = useMemo(() => {
+    if (!transactions) return [];
+    
     return transactions.filter(transaction => {
-      if (filters.search && !transaction.description.toLowerCase().includes(filters.search.toLowerCase())) {
-        return false;
-      }
-      if (filters.type !== 'all' && transaction.type !== filters.type) {
-        return false;
-      }
-      if (filters.accountId !== 'all' && transaction.accountId !== filters.accountId) {
-        return false;
-      }
-      if (filters.categoryId !== 'all' && transaction.categoryId !== filters.categoryId) {
-        return false;
-      }
-      if (filters.startDate && dayjs(transaction.date).isBefore(filters.startDate, 'day')) {
-        return false;
-      }
-      if (filters.endDate && dayjs(transaction.date).isAfter(filters.endDate, 'day')) {
-        return false;
-      }
-      return true;
-    });
-  };
+      const matchesSearch = !filters.search || 
+        transaction.description?.toLowerCase().includes(filters.search.toLowerCase()) ||
+        transaction.accountName?.toLowerCase().includes(filters.search.toLowerCase()) ||
+        transaction.categoryName?.toLowerCase().includes(filters.search.toLowerCase());
 
-  const getTransactionStats = () => {
-    const filteredTransactions = getFilteredTransactions();
-    return {
-      totalIncome: filteredTransactions
-        .filter(t => t.type === 'income')
-        .reduce((sum, t) => sum + t.amount, 0),
-      totalExpenses: Math.abs(filteredTransactions
-        .filter(t => t.type === 'expense')
-        .reduce((sum, t) => sum + t.amount, 0)),
-      count: filteredTransactions.length
-    };
-  };
+      const matchesType = filters.type === 'all' || transaction.type === filters.type;
+      
+      const matchesAccount = filters.accountId === 'all' || 
+        transaction.accountId === filters.accountId ||
+        transaction.toAccountId === filters.accountId;
+
+      const matchesCategory = filters.categoryId === 'all' || 
+        transaction.categoryId === filters.categoryId;
+
+      const transactionDate = dayjs(transaction.date);
+      const matchesDateRange = (!filters.startDate || transactionDate.isAfter(filters.startDate)) &&
+        (!filters.endDate || transactionDate.isBefore(filters.endDate));
+
+      return matchesSearch && matchesType && matchesAccount && 
+             matchesCategory && matchesDateRange;
+    });
+  }, [transactions, filters]);
+
+  const groupedTransactions = useMemo(() => {
+    if (!filteredTransactions) return [];
+
+    // Sort transactions by date and update/create time (newest first)
+    const sortedTransactions = [...filteredTransactions].sort((a, b) => {
+      // First compare by date
+      const dateA = dayjs(a.date).startOf('day');
+      const dateB = dayjs(b.date).startOf('day');
+      const dateCompare = dateB.valueOf() - dateA.valueOf();
+      
+      if (dateCompare !== 0) return dateCompare;
+      
+      // If same date, compare by update/create time
+      const timeA = dayjs(a.updatedAt || a.createdAt);
+      const timeB = dayjs(b.updatedAt || b.createdAt);
+      return timeB.valueOf() - timeA.valueOf();
+    });
+
+    // Group transactions by date
+    const groups = sortedTransactions.reduce((acc, transaction) => {
+      const dateKey = dayjs(transaction.date).format('YYYY-MM-DD');
+      if (!acc[dateKey]) {
+        acc[dateKey] = {
+          date: dateKey,
+          transactions: [],
+          totals: {
+            income: 0,
+            expenses: 0,
+            net: 0
+          }
+        };
+      }
+
+      // Keep transactions within each group sorted by update/create time
+      const transactions = [...acc[dateKey].transactions, transaction].sort((a, b) => {
+        const timeA = dayjs(a.updatedAt || a.createdAt);
+        const timeB = dayjs(b.updatedAt || b.createdAt);
+        return timeB.valueOf() - timeA.valueOf();
+      });
+
+      acc[dateKey] = {
+        ...acc[dateKey],
+        transactions,
+        totals: transactions.reduce((totals, t) => {
+          if (t.type === 'income') {
+            totals.income += Math.abs(t.amount);
+            totals.net += Math.abs(t.amount);
+          } else if (t.type === 'expense') {
+            totals.expenses += Math.abs(t.amount);
+            totals.net -= Math.abs(t.amount);
+          }
+          return totals;
+        }, { income: 0, expenses: 0, net: 0 })
+      };
+      
+      return acc;
+    }, {});
+
+    // Convert to array and sort by date
+    return Object.values(groups).sort((a, b) => 
+      dayjs(b.date).valueOf() - dayjs(a.date).valueOf()
+    );
+  }, [filteredTransactions]);
+
+  const transactionSummary = useMemo(() => {
+    return filteredTransactions.reduce((summary, transaction) => {
+      const amount = Math.abs(transaction.amount);
+      if (transaction.type === 'income') {
+        summary.totalIncome += amount;
+      } else if (transaction.type === 'expense') {
+        summary.totalExpenses += amount;
+      }
+      return summary;
+    }, { totalIncome: 0, totalExpenses: 0 });
+  }, [filteredTransactions]);
+
+  const loadTransactions = useCallback(async () => {
+    try {
+      setLoading(true);
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+
+      const batchSize = 100;
+      let allTransactions = [];
+      let offset = 0;
+
+      while (true) {
+        const batch = await DatabaseService.getTransactions(bankId, year, {
+          ...filters,
+          limit: batchSize,
+          offset
+        });
+
+        if (!batch.length) break;
+        allTransactions = [...allTransactions, ...batch];
+        offset += batchSize;
+
+        if (batch.length < batchSize) break;
+      }
+
+      setTransactions(allTransactions);
+    } catch (error) {
+      setError('Failed to load transactions');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentBank, currentYear, filters]);
+
+  const handleFilterChange = useCallback((name, value) => {
+    setFilters(prev => ({ ...prev, [name]: value }));
+  }, []);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (filters.search) {
+        loadTransactions();
+      }
+    }, 300);
+
+    return () => clearTimeout(handler);
+  }, [filters.search, loadTransactions]);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -240,7 +352,7 @@ const Transactions = () => {
                   Total Income
                 </Typography>
                 <Typography variant="h4" sx={{ color: 'success.main', my: 1 }}>
-                  {formatCurrency(getTransactionStats().totalIncome)}
+                  {formatCurrency(transactionSummary.totalIncome)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   From filtered transactions
@@ -255,7 +367,7 @@ const Transactions = () => {
                   Total Expenses
                 </Typography>
                 <Typography variant="h4" sx={{ color: 'error.main', my: 1 }}>
-                  {formatCurrency(getTransactionStats().totalExpenses)}
+                  {formatCurrency(transactionSummary.totalExpenses)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   From filtered transactions
@@ -272,13 +384,13 @@ const Transactions = () => {
                 <Typography 
                   variant="h4" 
                   sx={{ 
-                    color: getTransactionStats().totalIncome - getTransactionStats().totalExpenses >= 0 
+                    color: transactionSummary.totalIncome - transactionSummary.totalExpenses >= 0 
                       ? 'success.main' 
                       : 'error.main',
                     my: 1 
                   }}
                 >
-                  {formatCurrency(getTransactionStats().totalIncome - getTransactionStats().totalExpenses)}
+                  {formatCurrency(transactionSummary.totalIncome - transactionSummary.totalExpenses)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   Income - Expenses
@@ -297,7 +409,7 @@ const Transactions = () => {
                       fullWidth
                       placeholder="Search transactions..."
                       value={filters.search}
-                  onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                  onChange={(e) => handleFilterChange('search', e.target.value)}
                       InputProps={{
                         startAdornment: (
                           <InputAdornment position="start">
@@ -312,7 +424,7 @@ const Transactions = () => {
                       <InputLabel>Type</InputLabel>
                       <Select
                         value={filters.type}
-                    onChange={(e) => setFilters({ ...filters, type: e.target.value })}
+                    onChange={(e) => handleFilterChange('type', e.target.value)}
                         label="Type"
                       >
                         <MenuItem value="all">All Types</MenuItem>
@@ -327,7 +439,7 @@ const Transactions = () => {
                       <InputLabel>Account</InputLabel>
                       <Select
                         value={filters.accountId}
-                    onChange={(e) => setFilters({ ...filters, accountId: e.target.value })}
+                    onChange={(e) => handleFilterChange('accountId', e.target.value)}
                         label="Account"
                       >
                         <MenuItem value="all">All Accounts</MenuItem>
@@ -343,7 +455,7 @@ const Transactions = () => {
                     <DatePicker
                   label="Start Date"
                   value={filters.startDate}
-                  onChange={(date) => setFilters({ ...filters, startDate: date })}
+                  onChange={(date) => handleFilterChange('startDate', date)}
                       slotProps={{ textField: { fullWidth: true } }}
                     />
                   </Grid>
@@ -351,7 +463,7 @@ const Transactions = () => {
                 <DatePicker
                   label="End Date"
                   value={filters.endDate}
-                  onChange={(date) => setFilters({ ...filters, endDate: date })}
+                  onChange={(date) => handleFilterChange('endDate', date)}
                   slotProps={{ textField: { fullWidth: true } }}
                     />
                   </Grid>
@@ -365,7 +477,7 @@ const Transactions = () => {
                   <Typography variant="h6">
               Transaction List
               <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>
-                ({getFilteredTransactions().length} transactions)
+                ({filteredTransactions.length} transactions)
               </Typography>
             </Typography>
             <Button
@@ -389,23 +501,47 @@ const Transactions = () => {
                 Loading transactions...
                   </Typography>
             </Box>
-          ) : getFilteredTransactions().length === 0 ? (
+          ) : filteredTransactions.length === 0 ? (
             <Box sx={{ p: 4, textAlign: 'center' }}>
               <Typography color="text.secondary">
                 No transactions found. Adjust your filters or add a new transaction.
                   </Typography>
                 </Box>
           ) : (
-            <Stack 
-              spacing={1} 
+            <Stack spacing={2}>
+              {groupedTransactions.map((group) => (
+                <Box key={group.date}>
+                  <Box 
               sx={{ 
-                p: 2,
-                '& > div:first-of-type': {
-                  marginTop: 0
-                }
-              }}
-            >
-              {getFilteredTransactions().map((transaction) => {
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center',
+                      mb: 2,
+                      mt: 3
+                    }}
+                  >
+                    <Typography variant="subtitle1" fontWeight="500">
+                      {dayjs(group.date).format('dddd, MMMM D, YYYY')}
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 2 }}>
+                      <Typography variant="body2" color="success.main">
+                        +{formatCurrency(group.totals.income)}
+                      </Typography>
+                      <Typography variant="body2" color="error.main">
+                        -{formatCurrency(group.totals.expenses)}
+                      </Typography>
+                      <Typography 
+                        variant="body2" 
+                        color={group.totals.net >= 0 ? 'success.main' : 'error.main'}
+                        fontWeight="500"
+                      >
+                        {formatCurrency(Math.abs(group.totals.net))}
+                      </Typography>
+                    </Box>
+                  </Box>
+
+                  <Stack spacing={1}>
+                    {group.transactions.map((transaction) => {
                     const account = accounts.find(a => a.accountId === transaction.accountId);
                     const category = categories.find(c => c.categoryId === transaction.categoryId);
                     const toAccount = accounts.find(a => a.accountId === transaction.toAccountId);
@@ -466,9 +602,25 @@ const Transactions = () => {
                             <Typography variant="subtitle2" noWrap>
                               {transaction.description}
                             </Typography>
+                                  <Stack direction="row" spacing={1} alignItems="center">
                             <Typography variant="caption" color="text.secondary">
                               {dayjs(transaction.date).format('MMM D, YYYY')}
                             </Typography>
+                                    <Box
+                                      component="span"
+                                      sx={{
+                                        width: 4,
+                                        height: 4,
+                                        borderRadius: '50%',
+                                        bgcolor: 'text.disabled'
+                                      }}
+                                    />
+                                    <Tooltip title="Last updated">
+                                      <Typography variant="caption" color="text.secondary">
+                                        {dayjs(transaction.updatedAt || transaction.createdAt).format('HH:mm')}
+                                      </Typography>
+                                    </Tooltip>
+                                  </Stack>
                           </Box>
                         </Box>
                         <Typography
@@ -581,6 +733,11 @@ const Transactions = () => {
                                   bgcolor: 'text.disabled'
                                 }}
                               />
+                                    <Tooltip title="Last updated">
+                                      <Typography variant="caption" color="text.secondary">
+                                        {dayjs(transaction.updatedAt || transaction.createdAt).format('HH:mm')}
+                                      </Typography>
+                                    </Tooltip>
                             <Tooltip title="Account">
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                 <AccountBalanceWallet sx={{ fontSize: 14, color: 'text.secondary' }} />
@@ -713,6 +870,9 @@ const Transactions = () => {
                   </Card>
                     );
                   })}
+                  </Stack>
+                </Box>
+              ))}
                 </Stack>
           )}
             </Card>

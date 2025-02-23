@@ -8,21 +8,9 @@ class BackupService {
   
   static BACKUP_FORMATS = {
     DEFAULT: {
-      extension: 'egbackup',
-      mime: 'application/octet-stream',
-      description: 'ExpenseGo Backup',
-      version: '1.0'
-    },
-    ENCRYPTED: {
       extension: 'egsecure',
       mime: 'application/octet-stream',
       description: 'ExpenseGo Encrypted Backup',
-      version: '1.0'
-    },
-    PORTABLE: {
-      extension: 'egexport',
-      mime: 'application/json',
-      description: 'ExpenseGo Portable Export',
       version: '1.0'
     }
   };

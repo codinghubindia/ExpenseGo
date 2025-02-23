@@ -1739,6 +1739,52 @@ class DatabaseService {
       return false;
     }
   }
+
+  // Add this method to your DatabaseService
+  async recalculateAccountBalances(bankId, year) {
+    try {
+      const accounts = await this.getAccounts(bankId, year);
+      const transactions = await this.getTransactions(bankId, year);
+
+      for (const account of accounts) {
+        let balance = account.initialBalance;
+
+        // Sort transactions by date
+        const accountTransactions = transactions
+          .filter(t => t.accountId === account.accountId || t.toAccountId === account.accountId)
+          .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        // Calculate running balance
+        accountTransactions.forEach(transaction => {
+          if (transaction.type === 'income' && transaction.accountId === account.accountId) {
+            balance += Math.abs(transaction.amount);
+          } else if (transaction.type === 'expense' && transaction.accountId === account.accountId) {
+            balance -= Math.abs(transaction.amount);
+          } else if (transaction.type === 'transfer') {
+            if (transaction.accountId === account.accountId) {
+              balance -= Math.abs(transaction.amount);
+            }
+            if (transaction.toAccountId === account.accountId) {
+              balance += Math.abs(transaction.amount);
+            }
+          }
+        });
+
+        // Update account balance
+        await this.db.run(
+          `UPDATE accounts_${bankId}_${year} 
+           SET current_balance = ? 
+           WHERE account_id = ?`,
+          [balance, account.accountId]
+        );
+      }
+
+      await this.saveToIndexedDB();
+    } catch (error) {
+      console.error('Error recalculating account balances:', error);
+      throw error;
+    }
+  }
 }
 
 export default DatabaseService;

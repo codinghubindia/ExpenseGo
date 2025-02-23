@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Container,
   Typography,
@@ -45,34 +45,36 @@ const Categories = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { currentBank, currentYear } = useApp();
   const [categories, setCategories] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
 
-  useEffect(() => {
-    loadCategories();
-  }, [currentBank, currentYear]);
-
-  const loadCategories = async () => {
+  const loadCategories = useCallback(async () => {
     try {
       setLoading(true);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
       
-      await DatabaseService.initializeDatabase();
-      await DatabaseService.createBankYearTables(bankId, year);
-      await DatabaseService.createDefaultCategories(bankId, year);
-      
-      const data = await DatabaseService.getCategories(bankId, year);
-      setCategories(data || []);
+      const [categoriesData, transactionsData] = await Promise.all([
+        DatabaseService.getCategories(bankId, year),
+        DatabaseService.getTransactions(bankId, year)
+      ]);
+
+      setCategories(categoriesData || []);
+      setTransactions(transactionsData || []);
       setError(null);
     } catch (error) {
       setError('Failed to load categories: ' + error.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentBank, currentYear]);
+
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   const handleCreateCategory = async (categoryData) => {
     try {
@@ -134,18 +136,24 @@ const Categories = () => {
     try {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
-      
-      const categoryToDelete = categories.find(c => c.categoryId === categoryId);
-      if (categoryToDelete?.isDefault) {
-        setError('Cannot delete default categories');
+
+      // Check if category has transactions
+      if (!canDeleteCategory(categoryId)) {
+        setError('Cannot delete category that has transactions');
         return;
       }
-      
+
+      // Check if category is default
+      const category = categories.find(c => c.categoryId === categoryId);
+      if (category?.isDefault) {
+        setError('Cannot delete default category');
+        return;
+      }
+
       await DatabaseService.deleteCategory(bankId, year, categoryId);
       await loadCategories();
-      setError(null);
     } catch (error) {
-      setError(error.message || 'Failed to delete category');
+      setError('Failed to delete category: ' + error.message);
     }
   };
 
@@ -164,8 +172,69 @@ const Categories = () => {
     }
   };
 
-  const expenseCategories = categories.filter(c => c.type === 'expense');
-  const incomeCategories = categories.filter(c => c.type === 'income');
+  const groupedCategories = useMemo(() => {
+    if (!categories) return { expense: [], income: [] };
+    
+    return categories.reduce((groups, category) => {
+      groups[category.type] = groups[category.type] || [];
+      groups[category.type].push(category);
+      return groups;
+    }, { expense: [], income: [] });
+  }, [categories]);
+
+  const categoryUsage = useMemo(() => {
+    if (!transactions || !categories) return new Map();
+
+    return transactions.reduce((usage, transaction) => {
+      if (transaction.categoryId) {
+        const count = usage.get(transaction.categoryId) || 0;
+        usage.set(transaction.categoryId, count + 1);
+      }
+      return usage;
+    }, new Map());
+  }, [transactions, categories]);
+
+  const categoryTotals = useMemo(() => {
+    if (!transactions || !categories) return new Map();
+
+    return transactions.reduce((totals, transaction) => {
+      if (transaction.categoryId) {
+        const currentTotal = totals.get(transaction.categoryId) || 0;
+        totals.set(
+          transaction.categoryId, 
+          currentTotal + Math.abs(transaction.amount)
+        );
+      }
+      return totals;
+    }, new Map());
+  }, [transactions, categories]);
+
+  const handleBulkDelete = async (categoryIds) => {
+    try {
+      setLoading(true);
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+
+      // Process in batches of 10
+      for (let i = 0; i < categoryIds.length; i += 10) {
+        const batch = categoryIds.slice(i, i + 10);
+        await Promise.all(batch.map(id => 
+          DatabaseService.deleteCategory(bankId, year, id)
+        ));
+      }
+
+      await loadCategories();
+    } catch (error) {
+      setError('Failed to delete categories');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const canDeleteCategory = useCallback((categoryId) => {
+    const usageCount = categoryUsage.get(categoryId) || 0;
+    return usageCount === 0;
+  }, [categoryUsage]);
 
   return (
     <Container maxWidth="xl" sx={{ py: 4 }}>
@@ -229,7 +298,7 @@ const Categories = () => {
                 <Typography variant="h6">
                   Expense Categories
                   <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>
-                    ({expenseCategories.length})
+                    ({groupedCategories.expense.length})
                   </Typography>
                 </Typography>
                 <Button
@@ -246,7 +315,7 @@ const Categories = () => {
               </Box>
               <Divider />
               <Stack spacing={1} sx={{ p: 2 }}>
-                {expenseCategories.map((category) => (
+                {groupedCategories.expense.map((category) => (
                   <Card
                     key={category.categoryId}
                     elevation={0}
@@ -301,16 +370,18 @@ const Categories = () => {
                         }}
                       >
                         <Tooltip title="Edit">
-                          <IconButton
-                            size="small"
-                            onClick={() => {
-                              setSelectedCategory(category);
-                              setIsFormOpen(true);
-                            }}
-                            disabled={category.isDefault}
-                          >
-                            <EditIcon />
-                          </IconButton>
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setSelectedCategory(category);
+                                setIsFormOpen(true);
+                              }}
+                              disabled={category.isDefault}
+                            >
+                              <EditIcon />
+                            </IconButton>
+                          </span>
                         </Tooltip>
                         <Tooltip title={category.isDefault ? "Cannot delete default category" : "Delete"}>
                           <span>
@@ -318,7 +389,7 @@ const Categories = () => {
                               size="small"
                               color="error"
                               onClick={() => handleDeleteCategory(category.categoryId)}
-                              disabled={category.isDefault}
+                              disabled={category.isDefault || !canDeleteCategory(category.categoryId)}
                             >
                               <DeleteIcon />
                             </IconButton>
@@ -339,7 +410,7 @@ const Categories = () => {
                 <Typography variant="h6">
                   Income Categories
                   <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>
-                    ({incomeCategories.length})
+                    ({groupedCategories.income.length})
                   </Typography>
                 </Typography>
                 <Button
@@ -356,7 +427,7 @@ const Categories = () => {
               </Box>
               <Divider />
               <Stack spacing={1} sx={{ p: 2 }}>
-                {incomeCategories.map((category) => (
+                {groupedCategories.income.map((category) => (
                   <Card
                     key={category.categoryId}
                     elevation={0}
@@ -411,16 +482,18 @@ const Categories = () => {
                         }}
                       >
                         <Tooltip title="Edit">
-                          <IconButton
-                            size="small"
-                            onClick={() => {
-                              setSelectedCategory(category);
-                              setIsFormOpen(true);
-                            }}
-                            disabled={category.isDefault}
-                          >
-                            <EditIcon />
-                          </IconButton>
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setSelectedCategory(category);
+                                setIsFormOpen(true);
+                              }}
+                              disabled={category.isDefault}
+                            >
+                              <EditIcon />
+                            </IconButton>
+                          </span>
                         </Tooltip>
                         <Tooltip title={category.isDefault ? "Cannot delete default category" : "Delete"}>
                           <span>
@@ -428,7 +501,7 @@ const Categories = () => {
                               size="small"
                               color="error"
                               onClick={() => handleDeleteCategory(category.categoryId)}
-                              disabled={category.isDefault}
+                              disabled={category.isDefault || !canDeleteCategory(category.categoryId)}
                             >
                               <DeleteIcon />
                             </IconButton>

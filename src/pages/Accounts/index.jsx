@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unescaped-entities */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Container,
   Paper,
@@ -73,6 +73,7 @@ const Accounts = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { currency } = useRegion();
   const [accounts, setAccounts] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -91,34 +92,34 @@ const Accounts = () => {
   const [accountToDelete, setAccountToDelete] = useState(null);
   const { currentBank, currentYear } = useApp();
 
-  useEffect(() => {
-    loadData();
-  }, [currentBank, currentYear]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
       
-      // Get accounts data
-      const accountsData = await DatabaseService.getAccounts(bankId, year);
-      setAccounts(accountsData);
+      const [accountsData, transactionsData] = await Promise.all([
+        DatabaseService.getAccounts(bankId, year),
+        DatabaseService.getTransactions(bankId, year)
+      ]);
       
-      // Recalculate balances
       await DatabaseService.recalculateAccountBalances(bankId, year);
-      
-      // Get updated accounts data
-      const updatedAccountsData = await DatabaseService.getAccounts(bankId, year);
-      setAccounts(updatedAccountsData);
+      const updatedAccounts = await DatabaseService.getAccounts(bankId, year);
+
+      setAccounts(updatedAccounts);
+      setTransactions(transactionsData);
     } catch (error) {
       console.error('Error loading accounts:', error);
       setError('Failed to load accounts. Please try again.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentBank, currentYear]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -145,19 +146,16 @@ const Accounts = () => {
     }
   };
 
-  // Update the handleDelete function
   const handleDelete = async (account) => {
     try {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
       
-      // First check if it's a default account
       if (account.isDefault) {
         setError("Cannot delete default accounts");
         return;
       }
 
-      // Get all transactions for this account
       const transactions = await DatabaseService.getTransactions(bankId, year);
       const accountTransactions = transactions.filter(tx => 
         tx.fromAccountId === account.accountId || 
@@ -173,7 +171,6 @@ const Accounts = () => {
         return;
       }
 
-      // If no transactions, proceed with deletion confirmation
       setAccountToDelete(account);
       setConfirmDialog(true);
 
@@ -183,7 +180,6 @@ const Accounts = () => {
     }
   };
 
-  // Update the handleConfirmDelete function
   const handleConfirmDelete = async () => {
     try {
       if (!accountToDelete) return;
@@ -255,27 +251,103 @@ const Accounts = () => {
     }).format(amount);
   };
 
-  // Add a helper function to determine if delete button should be disabled
   const isDeleteDisabled = (account) => {
     return account.isDefault;
   };
 
-  // Update the refreshBalances function
   const refreshBalances = async () => {
     try {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
       
-      // Recalculate all balances
       await DatabaseService.recalculateAccountBalances(bankId, year);
       
-      // Get updated accounts
       const accountsData = await DatabaseService.getAccounts(bankId, year);
       setAccounts(accountsData);
     } catch (error) {
       setError('Failed to refresh account balances');
     }
   };
+
+  const accountBalances = useMemo(() => {
+    if (!accounts || !transactions) return new Map();
+
+    const balances = new Map(accounts.map(account => [
+      account.accountId,
+      { current: account.currentBalance, available: account.currentBalance }
+    ]));
+
+    transactions
+      .filter(t => t.date > new Date().toISOString())
+      .forEach(transaction => {
+        const balance = balances.get(transaction.accountId);
+        if (balance) {
+          balance.available += transaction.type === 'expense' ? 
+            -Math.abs(transaction.amount) : transaction.amount;
+        }
+      });
+
+    return balances;
+  }, [accounts, transactions]);
+
+  const handleBulkUpdate = async (accountUpdates) => {
+    try {
+      setLoading(true);
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+
+      for (let i = 0; i < accountUpdates.length; i += 5) {
+        const batch = accountUpdates.slice(i, i + 5);
+        await Promise.all(batch.map(update => 
+          DatabaseService.updateAccount(bankId, year, update.accountId, update.data)
+        ));
+      }
+
+      await loadData();
+    } catch (error) {
+      setError('Failed to update accounts');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const accountSummary = useMemo(() => {
+    return accounts.reduce((summary, account) => {
+      summary.totalBalance += account.currentBalance;
+      if (account.type === 'checking' || account.type === 'savings') {
+        summary.liquidAssets += account.currentBalance;
+      }
+      return summary;
+    }, { totalBalance: 0, liquidAssets: 0 });
+  }, [accounts]);
+
+  const accountTransactions = useMemo(() => {
+    if (!transactions || !accounts) return new Map();
+
+    const summary = new Map();
+    accounts.forEach(account => {
+      summary.set(account.accountId, {
+        income: 0,
+        expenses: 0,
+        transfers: 0
+      });
+    });
+
+    transactions.forEach(transaction => {
+      const accountSummary = summary.get(transaction.accountId);
+      if (accountSummary) {
+        if (transaction.type === 'income') {
+          accountSummary.income += Math.abs(transaction.amount);
+        } else if (transaction.type === 'expense') {
+          accountSummary.expenses += Math.abs(transaction.amount);
+        } else if (transaction.type === 'transfer') {
+          accountSummary.transfers += Math.abs(transaction.amount);
+        }
+      }
+    });
+
+    return summary;
+  }, [transactions, accounts]);
 
   return (
     <Box
@@ -289,7 +361,6 @@ const Accounts = () => {
       }}
     >
       <Container maxWidth="xl" sx={{ py: 4 }}>
-        {/* Header Section */}
         <Box sx={{ mb: 4 }}>
           <Grid container spacing={3} alignItems="center">
             <Grid item xs={12} md={6}>
@@ -327,7 +398,6 @@ const Accounts = () => {
           </Grid>
         </Box>
 
-        {/* Summary Card */}
         <Card sx={{ mb: 4, bgcolor: 'primary.main', color: 'primary.contrastText' }}>
           <CardContent>
             <Grid container spacing={3} alignItems="center">
@@ -348,14 +418,12 @@ const Accounts = () => {
                   gap: 2, 
                   justifyContent: { xs: 'flex-start', md: 'flex-end' } 
                 }}>
-                  {/* Add any additional summary metrics here */}
                 </Box>
               </Grid>
             </Grid>
           </CardContent>
         </Card>
 
-        {/* Accounts List */}
         <Card>
           <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography variant="h6">Account List</Typography>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Grid,
@@ -24,7 +24,8 @@ import {
   Select,
   MenuItem,
   TextField,
-  useMediaQuery
+  useMediaQuery,
+  Avatar
 } from '@mui/material';
 import {
   TrendingUp,
@@ -37,7 +38,9 @@ import {
   AccountBalanceWallet,
   LocalAtm,
   ArrowForward,
-  Add as AddIcon
+  Add as AddIcon,
+  Close as CloseIcon,
+  GetApp as GetAppIcon
 } from '@mui/icons-material';
 import {
   AreaChart,
@@ -86,6 +89,8 @@ const DASHBOARD_STYLES = {
   }
 };
 
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
+
 const Dashboard = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -96,35 +101,72 @@ const Dashboard = () => {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showInstallPrompt, setShowInstallPrompt] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
 
   const navigate = useNavigate();
 
-  const fetchData = useCallback(async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
 
-      const [fetchedAccounts, fetchedCategories, fetchedTransactions] = await Promise.all([
+      const [accountsData, transactionsData, categoriesData] = await Promise.all([
         DatabaseService.getAccounts(bankId, year),
-        DatabaseService.getCategories(bankId, year),
-        DatabaseService.getTransactions(bankId, year)
+        DatabaseService.getTransactions(bankId, year),
+        DatabaseService.getCategories(bankId, year)
       ]);
 
-      setAccounts(fetchedAccounts);
-      setCategories(fetchedCategories);
-      setTransactions(fetchedTransactions);
-    } catch (err) {
-      setError(err.message);
+      await DatabaseService.recalculateAccountBalances(bankId, year);
+      const updatedAccounts = await DatabaseService.getAccounts(bankId, year);
+
+      setAccounts(updatedAccounts);
+      setTransactions(transactionsData);
+      setCategories(categoriesData);
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+      setError('Failed to load dashboard data. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    loadData();
   }, [currentBank, currentYear]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallPrompt(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setShowInstallPrompt(false);
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+
+    deferredPrompt.prompt();
+
+    const { outcome } = await deferredPrompt.userChoice;
+    
+    setDeferredPrompt(null);
+    setShowInstallPrompt(false);
+
+    console.log(`User response to the install prompt: ${outcome}`);
+  };
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat(undefined, {
@@ -133,137 +175,131 @@ const Dashboard = () => {
     }).format(amount);
   };
 
-  const getTotalBalance = () => {
-    return accounts.reduce((sum, account) => sum + account.currentBalance, 0);
-  };
+  const balanceStats = useMemo(() => {
+    if (!accounts || !transactions) return {
+      totalBalance: 0,
+      monthlyIncome: 0,
+      monthlyExpenses: 0,
+      monthlySavings: 0,
+      savingsRate: 0
+    };
 
-  const getMonthlyIncome = () => {
-    return transactions
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth();
+    const currentYear = currentDate.getFullYear();
+
+    const totalBalance = accounts.reduce((sum, account) => sum + account.currentBalance, 0);
+
+    const currentMonthTransactions = transactions.filter(t => {
+      const txDate = new Date(t.date);
+      return txDate.getMonth() === currentMonth && txDate.getFullYear() === currentYear;
+    });
+
+    const monthlyIncome = currentMonthTransactions
       .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
-  };
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
-  const getMonthlyExpenses = () => {
-    return transactions
+    const monthlyExpenses = currentMonthTransactions
       .filter(t => t.type === 'expense')
       .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  };
 
-  const getMonthlySavings = () => {
-    const monthlyIncome = getMonthlyIncome();
-    const monthlyExpenses = getMonthlyExpenses();
-    return monthlyIncome - monthlyExpenses;
-  };
+    const monthlySavings = monthlyIncome - monthlyExpenses;
+    const savingsRate = monthlyIncome > 0 ? (monthlySavings / monthlyIncome) * 100 : 0;
 
-  const getSavingsRate = () => {
-    const monthlyIncome = getMonthlyIncome();
-    const monthlyExpenses = getMonthlyExpenses();
-    if (monthlyIncome === 0) return 0;
-    return ((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100;
-  };
+    return {
+      totalBalance,
+      monthlyIncome,
+      monthlyExpenses,
+      monthlySavings,
+      savingsRate
+    };
+  }, [accounts, transactions]);
 
-  const getActivityProgress = () => {
-    const today = new Date().getDate();
-    const daysInMonth = new Date(currentYear, new Date().getMonth() + 1, 0).getDate();
-    return (today / daysInMonth) * 100;
-  };
+  const categoryData = useMemo(() => {
+    if (!transactions || !categories) return [];
 
-  const getMonthlyData = () => {
-    const monthlyData = [];
-    const year = currentYear || new Date().getFullYear();
-    const currentMonth = new Date().getMonth();
-
-    // Calculate how many months to show (minimum 6)
-    const monthsToShow = Math.max(6, currentMonth + 1);
-    
-    // Get data for all months up to current month
-    for (let i = 0; i < 12; i++) {
-      const month = new Date(year, i, 1);
-      
-      // For past and current months, calculate actual data
-      if (i <= currentMonth) {
-        const monthIncome = transactions
-          .filter(t => {
-            const txDate = new Date(t.date);
-            return t.type === 'income' && 
-                   txDate.getMonth() === month.getMonth() && 
-                   txDate.getFullYear() === month.getFullYear();
-          })
-          .reduce((sum, t) => sum + t.amount, 0);
-
-        const monthExpenses = transactions
-          .filter(t => {
-            const txDate = new Date(t.date);
-            return t.type === 'expense' && 
-                   txDate.getMonth() === month.getMonth() && 
-                   txDate.getFullYear() === month.getFullYear();
-          })
-          .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
-        monthlyData.push({
-          name: month.toLocaleString('default', { month: 'short' }),
-          income: monthIncome,
-          expenses: monthExpenses,
-          balance: monthIncome - monthExpenses
-        });
-      } else {
-        // For future months, show zero values
-        monthlyData.push({
-          name: month.toLocaleString('default', { month: 'short' }),
-          income: 0,
-          expenses: 0,
-          balance: 0
-        });
-      }
-    }
-
-    return monthlyData;
-  };
-
-  const getCategoryData = () => {
-    const categoryTotals = {};
+    const categoryTotals = new Map();
     
     transactions
       .filter(t => t.type === 'expense')
       .forEach(transaction => {
         const category = categories.find(c => c.categoryId === transaction.categoryId);
         if (category) {
-          if (!categoryTotals[category.name]) {
-            categoryTotals[category.name] = 0;
-          }
-          categoryTotals[category.name] += Math.abs(transaction.amount);
+          const currentTotal = categoryTotals.get(category.name) || 0;
+          categoryTotals.set(category.name, currentTotal + Math.abs(transaction.amount));
         }
       });
 
-    return Object.entries(categoryTotals)
+    return Array.from(categoryTotals.entries())
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 5); // Show top 5 categories
-  };
+      .slice(0, 5);
+  }, [transactions, categories]);
 
-  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
+  const monthlyData = useMemo(() => {
+    if (!transactions) return [];
 
-  const totalBalance = getTotalBalance();
-  const monthlyIncome = getMonthlyIncome();
-  const monthlyExpenses = getMonthlyExpenses();
-  const monthlySavings = getMonthlySavings();
-  const savingsRate = getSavingsRate();
+    const monthlyMap = new Map();
+    const year = currentYear || new Date().getFullYear();
+
+    for (let month = 0; month < 12; month++) {
+      const date = new Date(year, month, 1);
+      const monthKey = dayjs(date).format('YYYY-MM');
+      monthlyMap.set(monthKey, {
+        month: dayjs(date).format('MMM'),
+        income: 0,
+        expenses: 0,
+        netFlow: 0
+      });
+    }
+
+    transactions.forEach(transaction => {
+      const transactionDate = dayjs(transaction.date);
+      if (transactionDate.year() === year) {
+        const monthKey = transactionDate.format('YYYY-MM');
+        const monthData = monthlyMap.get(monthKey);
+        
+        if (monthData) {
+          if (transaction.type === 'income') {
+            monthData.income += Math.abs(transaction.amount);
+          } else if (transaction.type === 'expense') {
+            monthData.expenses += Math.abs(transaction.amount);
+          }
+          monthData.netFlow = monthData.income - monthData.expenses;
+        }
+      }
+    });
+
+    return Array.from(monthlyMap.entries())
+      .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
+      .map(([_, data]) => data);
+  }, [transactions, currentYear]);
+
+  const totalBalance = balanceStats.totalBalance;
+  const monthlyIncome = balanceStats.monthlyIncome;
+  const monthlyExpenses = balanceStats.monthlyExpenses;
+  const monthlySavings = balanceStats.monthlySavings;
+  const savingsRate = balanceStats.savingsRate;
 
   const getLastMonthBalance = () => {
     const lastMonth = new Date();
     lastMonth.setMonth(lastMonth.getMonth() - 1);
     
-    return transactions
-      .filter(t => {
-        const txDate = new Date(t.date);
-        return txDate.getMonth() === lastMonth.getMonth() && 
-               txDate.getFullYear() === lastMonth.getFullYear();
-      })
-      .reduce((balance, t) => {
-        if (t.type === 'income') return balance + t.amount;
-        if (t.type === 'expense') return balance - Math.abs(t.amount);
-        return balance;
-      }, 0);
+    const lastMonthTransactions = transactions.filter(t => {
+      const txDate = new Date(t.date);
+      return txDate.getMonth() === lastMonth.getMonth() && 
+             txDate.getFullYear() === lastMonth.getFullYear();
+    });
+
+    const lastMonthIncome = lastMonthTransactions
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    const lastMonthExpenses = lastMonthTransactions
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    return lastMonthIncome - lastMonthExpenses;
   };
 
   const calculatePercentageChange = (current, previous) => {
@@ -312,31 +348,57 @@ const Dashboard = () => {
   const isExpensesUp = expensePercentageChange >= 0;
 
   const calculateSavings = () => {
-    const monthlyIncome = getMonthlyIncome();
-    const monthlyExpenses = getMonthlyExpenses();
-    const savings = monthlyIncome - monthlyExpenses;
+    const currentMonthIncome = balanceStats.monthlyIncome;
+    const currentMonthExpenses = balanceStats.monthlyExpenses;
+    const savingsAmount = currentMonthIncome - currentMonthExpenses;
+    const savingsRate = currentMonthIncome > 0 ? (savingsAmount / currentMonthIncome) * 100 : 0;
     
-    // Calculate savings rate
-    const savingsRate = monthlyIncome > 0 
-      ? Math.round((savings / monthlyIncome) * 100) 
-      : 0;
+    const lastMonthBalance = getLastMonthBalance();
+    const savingsChange = lastMonthBalance !== 0 ? 
+      ((savingsAmount - lastMonthBalance) / Math.abs(lastMonthBalance)) * 100 : 0;
 
-    // Get last month's savings for comparison
-    const lastMonthIncome = getLastMonthIncome();
-    const lastMonthExpenses = getLastMonthExpenses();
-    const lastMonthSavings = lastMonthIncome - lastMonthExpenses;
-    
-    // Calculate savings change percentage
-    const savingsChange = calculatePercentageChange(savings, lastMonthSavings);
-    
     return {
-      amount: savings,
-      rate: savingsRate,
+      amount: savingsAmount,
+      rate: Math.round(savingsRate),
       change: savingsChange,
-      isPositive: savings >= 0,
-      trend: savings > lastMonthSavings ? 'up' : 'down'
+      trend: savingsChange >= 0 ? 'up' : 'down',
+      isPositive: savingsAmount >= 0
     };
   };
+
+  const monthlyStats = useMemo(() => {
+    const lastMonthBalance = getLastMonthBalance();
+    
+    return {
+      totalExpenses: {
+        amount: balanceStats.monthlyExpenses,
+        change: lastMonthBalance !== 0 ? 
+          ((balanceStats.monthlyExpenses - lastMonthBalance) / lastMonthBalance) * 100 : 0
+      },
+      totalIncome: {
+        amount: balanceStats.monthlyIncome,
+        change: lastMonthBalance !== 0 ? 
+          ((balanceStats.monthlyIncome - lastMonthBalance) / lastMonthBalance) * 100 : 0
+      },
+      netIncome: {
+        amount: balanceStats.monthlySavings,
+        change: lastMonthBalance !== 0 ? 
+          ((balanceStats.monthlySavings - lastMonthBalance) / lastMonthBalance) * 100 : 0
+      }
+    };
+  }, [balanceStats]);
+
+  const topCategory = useMemo(() => {
+    if (!categoryData.length) return { name: 'No Data', percentage: 0 };
+    
+    const totalExpenses = categoryData.reduce((sum, cat) => sum + cat.value, 0);
+    const topCat = categoryData[0];
+    
+    return {
+      name: topCat.name,
+      percentage: totalExpenses > 0 ? (topCat.value / totalExpenses) * 100 : 0
+    };
+  }, [categoryData]);
 
   const savingsData = calculateSavings();
 
@@ -345,19 +407,25 @@ const Dashboard = () => {
       title: "Total Balance",
       value: formatCurrency(totalBalance),
       icon: <AccountBalance />,
-      color: theme.palette.primary.main
+      color: theme.palette.primary.main,
+      change: percentageChange,
+      trend: isPositiveChange ? 'up' : 'down'
     },
     {
       title: "Monthly Income",
       value: formatCurrency(monthlyIncome),
       icon: <TrendingUp />,
-      color: theme.palette.success.main
+      color: theme.palette.success.main,
+      change: monthlyStats.totalIncome.change,
+      trend: monthlyStats.totalIncome.change >= 0 ? 'up' : 'down'
     },
     {
       title: "Monthly Expenses",
       value: formatCurrency(monthlyExpenses),
       icon: <TrendingDown />,
-      color: theme.palette.error.main
+      color: theme.palette.error.main,
+      change: monthlyStats.totalExpenses.change,
+      trend: monthlyStats.totalExpenses.change >= 0 ? 'up' : 'down'
     },
     {
       title: "Monthly Savings",
@@ -397,6 +465,24 @@ const Dashboard = () => {
     }
   };
 
+  const recentTransactions = useMemo(() => {
+    if (!transactions) return [];
+
+    return [...transactions]
+      .sort((a, b) => {
+        const dateA = dayjs(a.date).startOf('day');
+        const dateB = dayjs(b.date).startOf('day');
+        const dateCompare = dateB.valueOf() - dateA.valueOf();
+        
+        if (dateCompare !== 0) return dateCompare;
+        
+        const timeA = dayjs(a.updatedAt || a.createdAt);
+        const timeB = dayjs(b.updatedAt || b.createdAt);
+        return timeB.valueOf() - timeA.valueOf();
+      })
+      .slice(0, 5);
+  }, [transactions]);
+
   return (
     <Container 
       maxWidth="2xl" 
@@ -405,6 +491,52 @@ const Dashboard = () => {
         px: { xs: 1, sm: 2, md: 3 }
       }}
     >
+      {/* Install Prompt */}
+      {showInstallPrompt && (
+        <Card
+          sx={{
+            mb: 2,
+            position: 'relative',
+            bgcolor: 'primary.soft',
+            border: '1px solid',
+            borderColor: 'primary.main',
+            borderRadius: 2,
+            overflow: 'hidden'
+          }}
+        >
+          <CardContent sx={{ py: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <GetAppIcon color="primary" />
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle2" color="primary.main" fontWeight={500}>
+                  Install ExpenseGo
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Add to your home screen for quick access
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={handleInstallClick}
+                  startIcon={<GetAppIcon />}
+                >
+                  Install
+                </Button>
+                <IconButton
+                  size="small"
+                  onClick={() => setShowInstallPrompt(false)}
+                  sx={{ color: 'text.secondary' }}
+                >
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            </Box>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Header Section */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
@@ -491,11 +623,14 @@ const Dashboard = () => {
       </Grid>
 
       {/* Main Content Grid */}
-      <Grid container spacing={{ xs: 2, sm: 3 }}>
+      <Grid 
+        container 
+        spacing={{ xs: 3, sm: 3, md: 4 }}
+      >
         {/* Charts Section */}
         <Grid item xs={12} lg={8}>
           <Card sx={{ 
-            mb: { xs: 2, sm: 3 },
+            mb: { xs: 3, sm: 4 },
             boxShadow: DASHBOARD_STYLES.cardShadow
           }}>
             <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
@@ -503,7 +638,7 @@ const Dashboard = () => {
                 display: 'flex', 
                 justifyContent: 'space-between', 
                 alignItems: 'center',
-                mb: 3 
+                mb: 3
               }}>
                 <Typography 
                   variant="h6" 
@@ -551,7 +686,7 @@ const Dashboard = () => {
               }}>
                 <ResponsiveContainer>
                   <AreaChart 
-                    data={getMonthlyData()}
+                    data={monthlyData}
                     margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                   >
                     <defs>
@@ -586,7 +721,7 @@ const Dashboard = () => {
                       opacity={0.5}
                     />
                     <XAxis 
-                      dataKey="name" 
+                      dataKey="month" 
                       stroke={theme.palette.text.secondary}
                       fontSize={12}
                       tickLine={false}
@@ -653,108 +788,101 @@ const Dashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Recent Activity Card */}
-          <Card sx={{ boxShadow: DASHBOARD_STYLES.cardShadow }}>
-            <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+          {/* Recent Activity */}
+          <Card sx={{ 
+            boxShadow: DASHBOARD_STYLES.cardShadow,
+            mb: { xs: 3, sm: 4 }
+          }}>
+            <CardContent>
               <Box sx={{ 
                 display: 'flex', 
                 justifyContent: 'space-between', 
-                alignItems: 'center', 
-                mb: 3 
+                alignItems: 'center',
+                mb: 2 
               }}>
-                <Typography 
-                  variant="h6"
-                  sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}
-                >
-                  Recent Activity
-                </Typography>
-                <Button 
-                  size="small" 
-                  endIcon={<ArrowForward />}
+                <Typography variant="h6">Recent Activity</Typography>
+                <Button
+                  size="small"
                   onClick={() => navigate('/transactions')}
+                  sx={{ textTransform: 'none' }}
                 >
                   View All
                 </Button>
               </Box>
-              
               <Stack spacing={2}>
-                {transactions.slice(0, 5).map((transaction) => {
-                  const isTransfer = transaction.type === 'transfer';
-                  const toAccount = isTransfer ? accounts.find(acc => acc.accountId === transaction.toAccountId)?.name : '';
-                  const fromAccount = isTransfer ? accounts.find(acc => acc.accountId === transaction.accountId)?.name : '';
+                {recentTransactions.map((transaction) => {
+                  const account = accounts.find(a => a.accountId === transaction.accountId);
+                  const category = categories.find(c => c.categoryId === transaction.categoryId);
                   
                   return (
                     <Box
                       key={transaction.transactionId}
                       sx={{
                         display: 'flex',
+                        alignItems: 'flex-start',
                         justifyContent: 'space-between',
-                        alignItems: 'center',
-                        p: 2,
-                        borderRadius: 2,
-                        bgcolor: 'background.paper',
-                        boxShadow: 1,
+                        p: 1.5,
+                        borderRadius: 1,
                         '&:hover': {
-                          bgcolor: 'action.hover',
-                          cursor: 'pointer'
+                          bgcolor: 'action.hover'
                         }
                       }}
                     >
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <Box sx={{ 
-                          p: 1, 
-                          borderRadius: 2, 
-                          bgcolor: 'background.default',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}>
-                          {getTransactionIcon(transaction.type)}
-                        </Box>
-                        <Box>
-                          <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                            {transaction.description}
-                          </Typography>
-                          {isTransfer ? (
-                            <Typography variant="body2" color="text.secondary">
-                              {fromAccount} → {toAccount}
-                            </Typography>
-                          ) : (
-                            <Typography variant="body2" color="text.secondary">
-                              {dayjs(transaction.date).format('MMM D, YYYY')}
-                            </Typography>
-                          )}
-                        </Box>
-                      </Box>
-                      <Box sx={{ textAlign: 'right' }}>
-                        <Typography
-                          variant="subtitle1"
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <Avatar
                           sx={{
-                            color: transaction.type === 'income' ? 'success.main' : 
-                                   transaction.type === 'expense' ? 'error.main' : 
-                                   'info.main',
-                            fontWeight: 500
+                            bgcolor: transaction.type === 'income' ? 'success.soft' :
+                                    transaction.type === 'expense' ? 'error.soft' :
+                                    'info.soft',
+                            width: 40,
+                            height: 40
                           }}
                         >
-                          {transaction.type === 'income' ? '+' : 
-                           transaction.type === 'expense' ? '-' : ''}
-                          {formatCurrency(Math.abs(transaction.amount))}
-                        </Typography>
-                        <Chip
-                          label={transaction.type === 'transfer' ? 'Transfer' : 
-                                 transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1)}
-                          size="small"
-                          sx={{
-                            bgcolor: transaction.type === 'income' ? 'success.soft' : 
-                                    transaction.type === 'expense' ? 'error.soft' : 
-                                    'info.soft',
-                            color: transaction.type === 'income' ? 'success.main' : 
-                                   transaction.type === 'expense' ? 'error.main' : 
-                                   'info.main',
-                            fontWeight: 500
-                          }}
-                        />
+                          {getTransactionIcon(transaction.type)}
+                        </Avatar>
+                        <Box>
+                          <Typography variant="subtitle2">
+                            {transaction.description}
+                          </Typography>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Typography variant="caption" color="text.secondary">
+                              {dayjs(transaction.date).format('MMM D, YYYY')}
+                            </Typography>
+                            <Box
+                              component="span"
+                              sx={{
+                                width: 4,
+                                height: 4,
+                                borderRadius: '50%',
+                                bgcolor: 'text.disabled'
+                              }}
+                            />
+                            <Tooltip title="Last updated">
+                              <Typography variant="caption" color="text.secondary">
+                                {dayjs(transaction.updatedAt || transaction.createdAt).format('HH:mm')}
+                              </Typography>
+                            </Tooltip>
+                            <Tooltip title="Account">
+                              <Typography variant="caption" color="text.secondary">
+                                • {account?.name}
+                              </Typography>
+                            </Tooltip>
+                          </Stack>
+                        </Box>
                       </Box>
+                      <Typography
+                        variant="subtitle2"
+                        sx={{
+                          color: transaction.type === 'income' ? 'success.main' :
+                                 transaction.type === 'expense' ? 'error.main' :
+                                 'info.main',
+                          fontWeight: 500
+                        }}
+                      >
+                        {transaction.type === 'income' ? '+' : 
+                         transaction.type === 'expense' ? '-' : ''}
+                        {formatCurrency(Math.abs(transaction.amount))}
+                      </Typography>
                     </Box>
                   );
                 })}
@@ -767,7 +895,7 @@ const Dashboard = () => {
         <Grid item xs={12} lg={4}>
           {/* Accounts Overview Card */}
           <Card sx={{ 
-            mb: { xs: 2, sm: 3 },
+            mb: { xs: 3, sm: 4 },
             boxShadow: DASHBOARD_STYLES.cardShadow
           }}>
             <CardContent>
@@ -853,7 +981,10 @@ const Dashboard = () => {
           </Card>
 
           {/* Expense Categories Chart */}
-          <Card sx={{ boxShadow: DASHBOARD_STYLES.cardShadow }}>
+          <Card sx={{ 
+            boxShadow: DASHBOARD_STYLES.cardShadow,
+            mb: { xs: 3, sm: 4 }
+          }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
                 Expense Categories
@@ -862,7 +993,7 @@ const Dashboard = () => {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={getCategoryData()}
+                      data={categoryData}
                       cx="50%"
                       cy="50%"
                       innerRadius={60}
@@ -870,7 +1001,7 @@ const Dashboard = () => {
                       paddingAngle={5}
                       dataKey="value"
                     >
-                      {getCategoryData().map((entry, index) => (
+                      {categoryData.map((entry, index) => (
                         <Cell 
                           key={`cell-${index}`} 
                           fill={COLORS[index % COLORS.length]}
