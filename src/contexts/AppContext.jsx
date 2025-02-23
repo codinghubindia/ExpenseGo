@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Snackbar, Alert } from '@mui/material';
 import DatabaseService from '../services/DatabaseService';
 import BackupService from '../services/BackupService';
 
@@ -10,11 +11,18 @@ export const AppProvider = ({ children }) => {
   const [currentBank, setCurrentBank] = useState(null);
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'system');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [showSuccess, setShowSuccess] = useState(false);
   const [currency, setCurrency] = useState({
     code: 'INR',
     symbol: '₹',
     name: 'Indian Rupee'
   });
+
+  const handleCloseSuccess = () => {
+    setShowSuccess(false);
+    setSuccessMessage('');
+  };
 
   useEffect(() => {
     initializeApp();
@@ -24,33 +32,49 @@ export const AppProvider = ({ children }) => {
     try {
       await DatabaseService.initializeDatabase();
 
-      // Check for pending restore
-      const backupContent = sessionStorage.getItem('backupContent');
-      const backupFormat = sessionStorage.getItem('backupFormat');
-      const restoreInProgress = sessionStorage.getItem('restoreInProgress');
+      // First check localStorage for backup data (for PWA)
+      const backupContent = localStorage.getItem('backupContent');
+      const backupFormat = localStorage.getItem('backupFormat');
+      const restoreInProgress = localStorage.getItem('restoreInProgress');
+      const restoreFileName = localStorage.getItem('restoreFileName');
 
-      if (backupContent && restoreInProgress) {
+      // If no data in localStorage, check sessionStorage (for browser)
+      const sessionBackupContent = sessionStorage.getItem('backupContent');
+      const sessionBackupFormat = sessionStorage.getItem('backupFormat');
+      const sessionRestoreInProgress = sessionStorage.getItem('restoreInProgress');
+      const sessionRestoreFileName = sessionStorage.getItem('restoreFileName');
+
+      if ((backupContent && restoreInProgress) || (sessionBackupContent && sessionRestoreInProgress)) {
         try {
           // Clear restore flags first
+          localStorage.removeItem('backupContent');
+          localStorage.removeItem('backupFormat');
+          localStorage.removeItem('restoreInProgress');
           sessionStorage.removeItem('backupContent');
           sessionStorage.removeItem('backupFormat');
           sessionStorage.removeItem('restoreInProgress');
 
           // Parse and process backup data
           let backupData;
-          if (backupFormat === 'ENCRYPTED') {
-            const decrypted = BackupService.decryptData(backupContent);
+          if (backupFormat === 'ENCRYPTED' || sessionBackupFormat === 'ENCRYPTED') {
+            const decrypted = BackupService.decryptData(backupContent || sessionBackupContent);
             backupData = JSON.parse(decrypted);
           } else {
-            backupData = JSON.parse(backupContent);
+            backupData = JSON.parse(backupContent || sessionBackupContent);
           }
 
           // Restore the data
           await BackupService.restoreBackup(backupData);
 
-          // Set success flag and force a final reload
+          // Set success flag in both storages with filename
+          const fileName = restoreFileName || sessionRestoreFileName || 'backup';
+          localStorage.setItem('restoreComplete', 'true');
+          localStorage.setItem('restoreSuccess', `Successfully restored data from ${fileName}`);
           sessionStorage.setItem('restoreComplete', 'true');
-          window.location.href = window.location.href.split('#')[0];
+          sessionStorage.setItem('restoreSuccess', `Successfully restored data from ${fileName}`);
+          
+          // Force a final reload
+          window.location.reload();
           return;
         } catch (error) {
           console.error('Restore failed:', error);
@@ -59,9 +83,25 @@ export const AppProvider = ({ children }) => {
       }
 
       // Check if restore was just completed
-      const restoreComplete = sessionStorage.getItem('restoreComplete');
+      const restoreComplete = localStorage.getItem('restoreComplete') || 
+                            sessionStorage.getItem('restoreComplete');
+      const restoreSuccess = localStorage.getItem('restoreSuccess') || 
+                            sessionStorage.getItem('restoreSuccess');
+                          
       if (restoreComplete) {
+        // Show success message if exists
+        if (restoreSuccess) {
+          setSuccessMessage(restoreSuccess);
+          setShowSuccess(true);
+        }
+        
+        // Clear all flags
+        localStorage.removeItem('restoreComplete');
+        localStorage.removeItem('restoreSuccess');
+        localStorage.removeItem('restoreFileName');
         sessionStorage.removeItem('restoreComplete');
+        sessionStorage.removeItem('restoreSuccess');
+        sessionStorage.removeItem('restoreFileName');
       }
 
       setIsLoading(false);
@@ -89,7 +129,36 @@ export const AppProvider = ({ children }) => {
     }
   };
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider value={value}>
+      {children}
+      <Snackbar
+        open={showSuccess}
+        autoHideDuration={6000}
+        onClose={handleCloseSuccess}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={handleCloseSuccess}
+          severity="success"
+          variant="filled"
+          elevation={6}
+          sx={{ 
+            width: '100%',
+            backgroundColor: 'success.main',
+            color: 'white',
+            '& .MuiAlert-icon': {
+              color: 'white'
+            },
+            fontSize: '1rem',
+            alignItems: 'center'
+          }}
+        >
+          {successMessage}
+        </Alert>
+      </Snackbar>
+    </AppContext.Provider>
+  );
 };
 
 export const useApp = () => {

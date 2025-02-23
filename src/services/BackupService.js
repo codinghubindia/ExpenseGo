@@ -453,12 +453,17 @@ class BackupService {
       // Get all required data with better error handling
       let banks, accounts, categories, transactions;
       try {
-        [banks, accounts, categories, transactions] = await Promise.all([
+        const results = await Promise.all([
           DatabaseService.getBanks(),
           DatabaseService.getAccounts(bankId, year),
           DatabaseService.getCategories(bankId, year),
           DatabaseService.getTransactions(bankId, year)
         ]);
+
+        [banks, accounts, categories, transactions] = results;
+
+        // Ensure transactions is an array
+        transactions = transactions?.transactions || [];
 
         // Log data for debugging
         console.log('Fetched Data:', {
@@ -482,15 +487,15 @@ class BackupService {
       // Process data with proper structure and type checking
       const backupData = {
         schema,
-        banks: banks.map(bank => ({
+        banks: Array.isArray(banks) ? banks.map(bank => ({
           bankId: Number(bank.bankId),
           name: String(bank.name || ''),
           description: String(bank.description || ''),
           isDefault: Boolean(bank.isDefault),
           createdAt: bank.createdAt || new Date().toISOString(),
           updatedAt: bank.updatedAt || new Date().toISOString()
-        })),
-        accounts: accounts.map(account => ({
+        })) : [],
+        accounts: Array.isArray(accounts) ? accounts.map(account => ({
           accountId: Number(account.accountId),
           bankId: Number(account.bankId),
           name: String(account.name || ''),
@@ -503,8 +508,8 @@ class BackupService {
           isDefault: Boolean(account.isDefault),
           createdAt: account.createdAt || new Date().toISOString(),
           updatedAt: account.updatedAt || new Date().toISOString()
-        })),
-        categories: categories.map(category => ({
+        })) : [],
+        categories: Array.isArray(categories) ? categories.map(category => ({
           categoryId: Number(category.categoryId),
           bankId: Number(category.bankId),
           name: String(category.name || ''),
@@ -514,8 +519,8 @@ class BackupService {
           isDefault: Boolean(category.isDefault),
           createdAt: category.createdAt || new Date().toISOString(),
           updatedAt: category.updatedAt || new Date().toISOString()
-        })),
-        transactions: (transactions || []).map(transaction => ({
+        })) : [],
+        transactions: Array.isArray(transactions) ? transactions.map(transaction => ({
           transactionId: Number(transaction.transactionId),
           type: String(transaction.type || 'expense'),
           amount: Number(transaction.amount || 0),
@@ -531,15 +536,15 @@ class BackupService {
                       typeof transaction.attachments === 'string' ? JSON.parse(transaction.attachments) : [],
           createdAt: transaction.createdAt || new Date().toISOString(),
           updatedAt: transaction.updatedAt || new Date().toISOString()
-        })),
+        })) : [],
         metadata: {
           bankId: Number(bankId),
           year: Number(year),
           timestamp: new Date().toISOString(),
           recordCounts: {
-            banks: banks.length,
-            accounts: accounts.length,
-            categories: categories.length,
+            banks: banks?.length || 0,
+            accounts: accounts?.length || 0,
+            categories: categories?.length || 0,
             transactions: transactions?.length || 0
           }
         }

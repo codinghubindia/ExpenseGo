@@ -31,6 +31,9 @@ const BackupRestore = () => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
+  // Check if running as installed PWA
+  const isPWA = window.matchMedia('(display-mode: standalone)').matches;
+
   const handleFormatChange = (event) => {
     setFormat(event.target.value);
   };
@@ -61,6 +64,7 @@ const BackupRestore = () => {
     try {
       setLoading(true);
       setError(null);
+      setSuccess(null);
 
       // Validate file size and format
       const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -88,31 +92,50 @@ const BackupRestore = () => {
         }
       }
 
-      
       // Read the file content
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
-          // Store backup info
-          sessionStorage.setItem('backupContent', e.target.result);
-          sessionStorage.setItem('backupFormat', format);
-          sessionStorage.setItem('restoreInProgress', 'true');
+          const backupData = e.target.result;
+
+          // Always store in localStorage for PWA support
+          localStorage.setItem('backupContent', backupData);
+          localStorage.setItem('backupFormat', format);
+          localStorage.setItem('restoreInProgress', 'true');
+          localStorage.setItem('restoreFileName', file.name);
+
+          // Also store in sessionStorage for browser support
+          try {
+            sessionStorage.setItem('backupContent', backupData);
+            sessionStorage.setItem('backupFormat', format);
+            sessionStorage.setItem('restoreInProgress', 'true');
+            sessionStorage.setItem('restoreFileName', file.name);
+          } catch (e) {
+            console.warn('SessionStorage not available:', e);
+          }
+
           window.location.reload(true);
 
+          // Clear existing data
           await BackupService.clearAllAppData();
-          // Clear data and force a hard reload
-          window.location.href = window.location.href.split('#')[0];
-          
+
+          // Force a complete page reload
+          window.location.href = window.location.origin + window.location.pathname;
         } catch (error) {
           setError('Failed to process backup file: ' + error.message);
+          localStorage.removeItem('restoreInProgress');
+          localStorage.removeItem('restoreFileName');
           sessionStorage.removeItem('restoreInProgress');
+          sessionStorage.removeItem('restoreFileName');
           setLoading(false);
         }
       };
+
       reader.onerror = () => {
         setError('Failed to read backup file');
         setLoading(false);
       };
+
       reader.readAsText(file);
 
     } catch (error) {
@@ -123,11 +146,23 @@ const BackupRestore = () => {
 
   const handleClose = () => {
     setOpen(false);
-    // Check if restore was completed
-    const restoreComplete = sessionStorage.getItem('restoreComplete');
+    
+    // Check restore completion in both storages
+    const restoreComplete = sessionStorage.getItem('restoreComplete') || 
+                           localStorage.getItem('restoreComplete');
+                         
     if (restoreComplete) {
-      // Clear the flag and reload
+      // Clear flags from both storages
       sessionStorage.removeItem('restoreComplete');
+      localStorage.removeItem('restoreComplete');
+      sessionStorage.removeItem('backupContent');
+      localStorage.removeItem('backupContent');
+      sessionStorage.removeItem('backupFormat');
+      localStorage.removeItem('backupFormat');
+      sessionStorage.removeItem('restoreInProgress');
+      localStorage.removeItem('restoreInProgress');
+      
+      // Reload the page
       window.location.reload();
     }
   };
