@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 
 export const regionSettings = {
   'IN': { 
@@ -32,21 +32,39 @@ export const regionSettings = {
   }
 };
 
-const RegionContext = createContext();
+const RegionContext = createContext(undefined);
 
-export const RegionProvider = ({ children }) => {
-  const [currency] = useState({
-    code: 'INR',
-    symbol: '₹',
-    name: 'Indian Rupee',
-    locale: 'en-IN'
-  });
+export function RegionProvider({ children }) {
+  // Change default region to 'IN' (India)
+  const [region, setRegion] = useState('IN');
+  const [currency, setCurrency] = useState(regionSettings['IN'].currency);
+
+  const updateRegion = (newRegion) => {
+    setRegion(newRegion);
+    setCurrency(regionSettings[newRegion].currency);
+    localStorage.setItem('userRegion', newRegion);
+  };
+
+  useEffect(() => {
+    // Load saved region or use India as default
+    const savedRegion = localStorage.getItem('userRegion') || 'IN';
+    if (regionSettings[savedRegion]) {
+      setRegion(savedRegion);
+      setCurrency(regionSettings[savedRegion].currency);
+    }
+  }, []);
 
   return (
-    <RegionContext.Provider value={{ currency }}>
+    <RegionContext.Provider value={{ region, currency, updateRegion }}>
       {children}
     </RegionContext.Provider>
   );
-};
+}
 
-export const useRegion = () => useContext(RegionContext);
+export const useRegion = () => {
+  const context = useContext(RegionContext);
+  if (context === undefined) {
+    throw new Error('useRegion must be used within a RegionProvider');
+  }
+  return context;
+};

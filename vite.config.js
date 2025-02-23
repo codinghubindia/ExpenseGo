@@ -7,45 +7,47 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
-      injectRegister: 'auto',
-      manifest: {
-        name: 'ExpenseGo',
-        short_name: 'ExpenseGo',
-        description: 'A Progressive Web App for managing personal finances',
-        theme_color: '#2563EB',
-        background_color: '#F1F5F9',
-        display: 'standalone',
-        scope: '/ExpenseGo/',
-        start_url: '/ExpenseGo/',
-        icons: [
-          {
-            src: 'revenue-growth.svg',
-            sizes: '512x512',
-            type: 'image/svg+xml',
-            purpose: 'any maskable'
-          }
-        ]
+      registerType: 'prompt',
+      devOptions: {
+        enabled: true,
+        type: 'module',
+        navigateFallback: 'index.html'
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,webp}'],
+        globPatterns: ['**/*.{js,css,html,ico,wasm}'],
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/sql\.js\.org\/.*$/,
+            urlPattern: /^https:\/\/sql\.js\.org\/dist\/.*/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'sql-js-cache',
               expiration: {
                 maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
+                maxAgeSeconds: 60 * 60 * 24 * 365 // 1 year
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
               }
             }
           }
-        ],
-        navigateFallback: 'offline.html'
+        ]
       },
-      devOptions: {
-        enabled: process.env.NODE_ENV === 'development'
+      manifest: {
+        name: 'ExpenseGo',
+        short_name: 'ExpenseGo',
+        description: 'Personal Finance Manager',
+        theme_color: '#3B82F6',
+        start_url: '/ExpenseGo/',
+        scope: '/ExpenseGo/',
+        display: 'standalone',
+        background_color: '#ffffff',
+        icons: [
+          {
+            src: 'favicon.ico',
+            sizes: '64x64',
+            type: 'image/x-icon'
+          }
+        ]
       }
     })
   ],

@@ -162,6 +162,14 @@ class DatabaseService {
   // Add transaction state tracking
   static isTransactionActive = false;
 
+  static STORAGE_LIMITS = {
+    maxTransactions: 10000,
+    maxAccounts: 100,
+    maxCategories: 100,
+    maxBanks: 10,
+    maxYears: 5
+  };
+
   static handleError(error, context) {
     // Remove development logging
     if (process.env.NODE_ENV === 'production') {
@@ -222,37 +230,61 @@ class DatabaseService {
       if (!this.idb) {
         throw new Error('IndexedDB not initialized');
       }
+      
       const tx = this.idb.transaction(this.IDB_STORE_NAME, 'readonly');
       const store = tx.objectStore(this.IDB_STORE_NAME);
       const data = await store.get('database');
       await tx.done;
+
+      // If no data in IndexedDB, try localStorage
+      if (!data) {
+        const localData = localStorage.getItem('financialDB');
+        if (localData) {
+          return new Uint8Array(JSON.parse(localData));
+        }
+      }
+
       return data;
     } catch (error) {
-      this.handleError(error, 'Error loading from IndexedDB');
+      console.error('Error loading from IndexedDB:', error);
+      // Try loading from localStorage as fallback
+      try {
+        const localData = localStorage.getItem('financialDB');
+        if (localData) {
+          return new Uint8Array(JSON.parse(localData));
+        }
+      } catch (e) {
+        console.error('Failed to load from localStorage:', e);
+      }
       return null;
     }
   }
 
   static async saveToIndexedDB() {
-    await this.backupToIndexedDB();
-    
-    // Request sync if available
-    if ('serviceWorker' in navigator && 'sync' in registration) {
-      const registration = await navigator.serviceWorker.ready;
-      await registration.sync.register('sync-database');
-    }
-
     try {
       if (!this.idb) {
         throw new Error('IndexedDB not initialized');
       }
+
+      await this.checkStorageUsage();
+
       const tx = this.idb.transaction(this.IDB_STORE_NAME, 'readwrite');
       const store = tx.objectStore(this.IDB_STORE_NAME);
       const data = this.db.export();
       await store.put(data, 'database');
       await tx.done;
+
+      // Store last update timestamp
+      localStorage.setItem('lastDbUpdate', Date.now().toString());
     } catch (error) {
-      this.handleError(error, 'Error saving to IndexedDB');
+      console.error('Error saving to IndexedDB:', error);
+      // Try to save to localStorage as fallback
+      try {
+        const data = this.db.export();
+        localStorage.setItem('financialDB', JSON.stringify(Array.from(data)));
+      } catch (e) {
+        console.error('Failed to save to localStorage:', e);
+      }
     }
   }
 
@@ -1951,44 +1983,14 @@ class DatabaseService {
     }
   }
 
-  static async backupToIndexedDB() {
-    try {
-      const dbExport = await this.db.export();
-      const blob = new Blob([dbExport], { type: 'application/octet-stream' });
+  static async checkStorageUsage() {
+    if ('storage' in navigator && 'estimate' in navigator.storage) {
+      const estimate = await navigator.storage.estimate();
+      const percentageUsed = (estimate.usage / estimate.quota) * 100;
       
-      // Store in IndexedDB
-      const backupDB = await openDB('ExpenseGo-Backup', 1, {
-        upgrade(db) {
-          db.createObjectStore('backups');
-        }
-      });
-      
-      await backupDB.put('backups', {
-        data: blob,
-        timestamp: new Date().toISOString()
-      }, 'latest');
-      
-      return true;
-    } catch (error) {
-      console.error('Backup failed:', error);
-      return false;
-    }
-  }
-
-  static async restoreFromIndexedDB() {
-    try {
-      const backupDB = await openDB('ExpenseGo-Backup', 1);
-      const backup = await backupDB.get('backups', 'latest');
-      
-      if (!backup) return false;
-      
-      const arrayBuffer = await backup.data.arrayBuffer();
-      await this.db.import(arrayBuffer);
-      
-      return true;
-    } catch (error) {
-      console.error('Restore failed:', error);
-      return false;
+      if (percentageUsed > 80) {
+        console.warn(`Storage usage is high (${percentageUsed.toFixed(2)}%). Consider cleaning old data.`);
+      }
     }
   }
 }

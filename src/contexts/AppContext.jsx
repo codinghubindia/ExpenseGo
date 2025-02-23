@@ -10,6 +10,11 @@ export const AppProvider = ({ children }) => {
   const [currentBank, setCurrentBank] = useState(null);
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'system');
+  const [currency, setCurrency] = useState({
+    code: 'INR',
+    symbol: '₹',
+    name: 'Indian Rupee'
+  });
 
   useEffect(() => {
     initializeApp();
@@ -77,6 +82,10 @@ export const AppProvider = ({ children }) => {
     setTheme: (newTheme) => {
       setTheme(newTheme);
       localStorage.setItem('theme', newTheme);
+    },
+    currency,
+    setCurrency: (newCurrency) => {
+      setCurrency(newCurrency);
     }
   };
 

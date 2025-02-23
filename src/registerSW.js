@@ -1,15 +1,18 @@
-export const registerSW = () => {
+export const registerSW = async () => {
   if ('serviceWorker' in navigator) {
-    // Let Vite PWA handle the registration
-    window.addEventListener('load', () => {
-      // Add offline/online handlers
-      window.addEventListener('online', () => {
-        document.dispatchEvent(new CustomEvent('app-online'));
+    try {
+      // Use the virtual module provided by Vite PWA in dev
+      const { registerSW } = await import('virtual:pwa-register');
+      
+      registerSW({
+        onOfflineReady() {
+          console.log('App ready to work offline');
+        },
+        immediate: true
       });
 
-      window.addEventListener('offline', () => {
-        document.dispatchEvent(new CustomEvent('app-offline'));
-      });
-    });
+    } catch (error) {
+      console.warn('PWA registration failed:', error);
+    }
   }
 }; 

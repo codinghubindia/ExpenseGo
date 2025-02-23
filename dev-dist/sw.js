@@ -67,10 +67,13 @@ if (!self.define) {
     });
   };
 }
-define(['./workbox-d9a5ed57'], (function (workbox) { 'use strict';
+define(['./workbox-f6195dc0'], (function (workbox) { 'use strict';
 
-  self.skipWaiting();
-  workbox.clientsClaim();
+  self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+      self.skipWaiting();
+    }
+  });
 
   /**
    * The precacheAndRoute() method efficiently caches and responds to
@@ -81,18 +84,20 @@ define(['./workbox-d9a5ed57'], (function (workbox) { 'use strict';
     "url": "registerSW.js",
     "revision": "ccd5f4627cd3b1a8ec5260c016f8deac"
   }, {
-    "url": "offline.html",
-    "revision": "0.40i4v1g5sko"
+    "url": "index.html",
+    "revision": "0.okhp543jve8"
   }], {});
   workbox.cleanupOutdatedCaches();
-  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("offline.html"), {
+  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
     allowlist: [/^\/$/]
   }));
-  workbox.registerRoute(/^https:\/\/sql\.js\.org\/.*$/, new workbox.CacheFirst({
+  workbox.registerRoute(/^https:\/\/sql\.js\.org\/dist\/.*/i, new workbox.CacheFirst({
     "cacheName": "sql-js-cache",
     plugins: [new workbox.ExpirationPlugin({
       maxEntries: 10,
-      maxAgeSeconds: 2592000
+      maxAgeSeconds: 31536000
+    }), new workbox.CacheableResponsePlugin({
+      statuses: [0, 200]
     })]
   }), 'GET');
 

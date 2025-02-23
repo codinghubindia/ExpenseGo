@@ -685,7 +685,7 @@ const Transactions = () => {
                           sx={{ 
                             bgcolor: 'background.paper',
                             '&:hover': { bgcolor: 'action.hover' }
-                          }}
+                              }}
                             >
                           <EditIcon fontSize="small" />
                             </IconButton>
@@ -699,7 +699,7 @@ const Transactions = () => {
                           sx={{ 
                             bgcolor: 'background.paper',
                             '&:hover': { bgcolor: 'error.soft' }
-                          }}
+                              }}
                             >
                           <DeleteIcon fontSize="small" />
                             </IconButton>

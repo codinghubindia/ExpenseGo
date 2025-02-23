@@ -1,53 +1,60 @@
 # ExpenseGo
 
-ExpenseGo is a modern, offline-first expense tracking application built with React and Vite. It helps users manage their personal finances with features like transaction tracking, multi-account management, and data backup/restore capabilities.
+ExpenseGo is a modern, offline-first personal finance manager built with React and Vite. It helps users track their expenses, income, and manage multiple accounts with a focus on privacy and data security.
 
 ## Features
 
-- 💰 **Transaction Management**
-  - Track income, expenses, and transfers
-  - Categorize transactions
-  - Multiple payment methods support
-  - Advanced filtering and search
+### 💰 Financial Management
+- Track income, expenses, and transfers between accounts
+- Real-time balance updates
+- Monthly transaction summaries
+- Detailed transaction history
+- Support for multiple payment methods
 
-- 🏦 **Account Management**
-  - Multiple account support
-  - Account balance tracking
-  - Different account types (Cash, Bank, etc.)
-  - Custom account colors and icons
+### 📊 Analytics & Reports
+- Monthly income/expense trends
+- Category-wise expense breakdown
+- Account balance overview
+- Savings rate tracking
+- Visual data representation with charts
 
-- 📊 **Categories**
-  - Predefined expense/income categories
-  - Custom category creation
-  - Category-wise transaction tracking
+### 🏦 Account Management
+- Multiple account support (Cash, Bank, etc.)
+- Real-time balance tracking
+- Custom account colors and icons
+- Default cash account for quick entries
+- Transfer between accounts
 
-- 💾 **Data Management**
-  - Offline-first architecture using IndexedDB
-  - Backup and restore functionality
-  - Encrypted backup support
-  - Data export capabilities
+### 📁 Category Organization
+- Pre-defined expense and income categories
+- Custom category creation
+- Category-based filtering
+- Color coding and icons for categories
 
-- 🌐 **Regional Support**
-  - Multi-currency support
-  - Localized number formatting
-  - Customizable date formats
+### 💾 Data Security & Backup
+- Offline-first using IndexedDB
+- Local data storage
+- Automatic data persistence
+- No server dependencies
+- Default INR currency support
 
-- 🎨 **User Interface**
-  - Modern Material UI design
-  - Responsive layout
-  - Dark/Light theme support
-  - Mobile-friendly interface
+### 🎨 User Experience
+- Clean, modern Material UI design
+- Responsive layout for all devices
+- Intuitive navigation
+- Quick access to frequent actions
+- PWA support for offline access
 
-## Tech Stack
+## Technical Stack
 
-- **Frontend Framework**: React 18
+- **Frontend**: React 18
 - **Build Tool**: Vite
-- **UI Library**: Material-UI (MUI)
-- **Database**: IndexedDB (SQL.js)
+- **UI Framework**: Material-UI (MUI)
+- **Database**: SQL.js with IndexedDB
 - **State Management**: React Context
 - **Date Handling**: Day.js
-- **Data Encryption**: CryptoJS
-- **File Handling**: Native File API
+- **Charts**: Recharts
+- **PWA Support**: Vite PWA Plugin
 
 ## Project Structure
 

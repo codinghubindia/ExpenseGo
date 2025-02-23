@@ -56,7 +56,7 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Customize this with your app's cache name and version
+// Add version check for cache management
 const CACHE_NAME = 'expensego-v1';
 const STATIC_ASSETS = [
   '/',
@@ -64,8 +64,7 @@ const STATIC_ASSETS = [
   '/manifest.json',
   '/favicon.ico',
   '/logo192.png',
-  '/logo512.png',
-  // Add other static assets
+  '/logo512.png'
 ];
 
 // Install event - cache static assets
@@ -75,7 +74,6 @@ self.addEventListener('install', (event) => {
       return cache.addAll(STATIC_ASSETS);
     })
   );
-  self.skipWaiting();
 });
 
 // Activate event - clean up old caches
@@ -89,39 +87,51 @@ self.addEventListener('activate', (event) => {
       );
     })
   );
-  self.clients.claim();
 });
 
 // Fetch event - serve from cache, then network
 self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request).then((response) => {
-      return response || fetch(event.request).then((fetchResponse) => {
-        // Cache successful responses
-        if (fetchResponse && fetchResponse.status === 200) {
-          const responseToCache = fetchResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+      // Return cached response if found
+      if (response) {
+        return response;
+      }
+
+      // Clone the request because it can only be used once
+      const fetchRequest = event.request.clone();
+
+      return fetch(fetchRequest).then((response) => {
+        // Check if valid response
+        if (!response || response.status !== 200 || response.type !== 'basic') {
+          return response;
         }
-        return fetchResponse;
+
+        // Clone the response because it can only be used once
+        const responseToCache = response.clone();
+
+        // Add new responses to cache
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(event.request, responseToCache);
+        });
+
+        return response;
       });
     })
   );
 });
 
-// Handle database sync
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'sync-database') {
-    event.waitUntil(syncDatabase());
-  }
-});
-
-// Periodic database backup
-self.addEventListener('periodicsync', (event) => {
-  if (event.tag === 'backup-database') {
-    event.waitUntil(backupDatabase());
-  }
+// Handle offline fallback
+self.addEventListener('install', (event) => {
+  const offlinePage = new Response(
+    '<html><body><h1>Offline</h1><p>The app is currently offline.</p></body></html>',
+    {
+      headers: { 'Content-Type': 'text/html' },
+    }
+  );
+  event.waitUntil(
+    caches.open('offline').then((cache) => cache.put('/offline.html', offlinePage))
+  );
 });
 
 // Add these routes to your workbox configuration
