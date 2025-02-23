@@ -1709,6 +1709,36 @@ class DatabaseService {
       throw error;
     }
   }
+
+  // Add this method to DatabaseService class
+  static async hasExistingData() {
+    try {
+      await this.initializeDatabase();
+      const year = new Date().getFullYear();
+      const bankId = 1; // Default bank ID
+
+      // Check for existing transactions
+      const transactions = await this.db.exec(`
+        SELECT COUNT(*) as count 
+        FROM transactions_${bankId}_${year}
+      `);
+      const transactionCount = transactions[0]?.values?.[0]?.[0] || 0;
+
+      // Check for non-default accounts
+      const accounts = await this.db.exec(`
+        SELECT COUNT(*) as count 
+        FROM accounts_${bankId}_${year}
+        WHERE is_default = 0
+      `);
+      const accountCount = accounts[0]?.values?.[0]?.[0] || 0;
+
+      // Return true if there are any transactions or non-default accounts
+      return transactionCount > 0 || accountCount > 0;
+    } catch (error) {
+      // If tables don't exist, there's no existing data
+      return false;
+    }
+  }
 }
 
 export default DatabaseService;

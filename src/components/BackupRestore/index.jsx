@@ -21,8 +21,10 @@ import {
 } from '@mui/icons-material';
 import BackupService from '../../services/BackupService';
 import DatabaseService from '../../services/DatabaseService';
+import { useApp } from '../../contexts/AppContext';
 
 const BackupRestore = () => {
+  const { setIsLoading } = useApp();
   const [format, setFormat] = useState('DEFAULT');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -53,39 +55,80 @@ const BackupRestore = () => {
   };
 
   const handleRestore = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
     try {
       setLoading(true);
       setError(null);
-      const file = event.target.files[0];
-      if (!file) return;
 
-      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+      // Validate file size and format
+      const MAX_FILE_SIZE = 10 * 1024 * 1024;
       if (file.size > MAX_FILE_SIZE) {
         throw new Error('File size too large. Maximum size is 10MB.');
       }
 
       const extension = file.name.split('.').pop().toLowerCase();
-      const isValidExtension = Object.values(BackupService.BACKUP_FORMATS)
-        .some(format => format.extension === extension);
+      const format = Object.entries(BackupService.BACKUP_FORMATS)
+        .find(([_, value]) => value.extension === extension)?.[0];
 
-      if (!isValidExtension) {
+      if (!format) {
         throw new Error('Invalid backup file format. Please use a valid ExpenseGo backup file.');
       }
 
-      await BackupService.restoreBackup(file);
+      // Check for existing data
+      const hasData = await DatabaseService.hasExistingData();
+      if (hasData) {
+        const shouldProceed = window.confirm(
+          'This will replace all existing data with the backup data. Are you sure you want to proceed?'
+        );
+        if (!shouldProceed) {
+          setLoading(false);
+          return;
+        }
+      }
+
       
-      // Force reload of app data
-      await DatabaseService.initializeDatabase();
-      
-      setSuccess('Data restored successfully! The page will refresh.');
-      // Reload the page after a short delay
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
+      // Read the file content
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          // Store backup info
+          sessionStorage.setItem('backupContent', e.target.result);
+          sessionStorage.setItem('backupFormat', format);
+          sessionStorage.setItem('restoreInProgress', 'true');
+          window.location.reload(true);
+
+          await BackupService.clearAllAppData();
+          // Clear data and force a hard reload
+          window.location.href = window.location.href.split('#')[0];
+          
+        } catch (error) {
+          setError('Failed to process backup file: ' + error.message);
+          sessionStorage.removeItem('restoreInProgress');
+          setLoading(false);
+        }
+      };
+      reader.onerror = () => {
+        setError('Failed to read backup file');
+        setLoading(false);
+      };
+      reader.readAsText(file);
+
     } catch (error) {
       setError('Failed to restore backup: ' + error.message);
-    } finally {
       setLoading(false);
+    }
+  };
+
+  const handleClose = () => {
+    setOpen(false);
+    // Check if restore was completed
+    const restoreComplete = sessionStorage.getItem('restoreComplete');
+    if (restoreComplete) {
+      // Clear the flag and reload
+      sessionStorage.removeItem('restoreComplete');
+      window.location.reload();
     }
   };
 
@@ -99,7 +142,12 @@ const BackupRestore = () => {
         Backup & Restore
       </Button>
 
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog 
+        open={open} 
+        onClose={handleClose}
+        maxWidth="sm" 
+        fullWidth
+      >
         <DialogTitle>Backup and Restore</DialogTitle>
         <DialogContent>
           {error && (
@@ -117,7 +165,14 @@ const BackupRestore = () => {
             <Typography variant="h6" gutterBottom>
               Backup
             </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Stack 
+              spacing={2} 
+              sx={{ 
+                '& > div:first-of-type': {
+                  marginTop: 0
+                }
+              }}
+            >
               <FormControl fullWidth>
                 <InputLabel>Backup Format</InputLabel>
                 <Select
@@ -140,14 +195,21 @@ const BackupRestore = () => {
               >
                 Create Backup
               </Button>
-            </Box>
+            </Stack>
           </Box>
 
           <Box>
             <Typography variant="h6" gutterBottom>
               Restore
             </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Stack 
+              spacing={2} 
+              sx={{ 
+                '& > div:first-of-type': {
+                  marginTop: 0
+                }
+              }}
+            >
               <Typography variant="body2" color="text.secondary">
                 Restore your data from a previous backup file.
                 Supported formats: {Object.values(BackupService.BACKUP_FORMATS)
@@ -168,7 +230,7 @@ const BackupRestore = () => {
                   onChange={handleRestore}
                 />
               </Button>
-            </Box>
+            </Stack>
           </Box>
 
           {loading && (
@@ -178,7 +240,7 @@ const BackupRestore = () => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>Close</Button>
+          <Button onClick={handleClose}>Close</Button>
         </DialogActions>
       </Dialog>
     </>
