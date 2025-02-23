@@ -422,7 +422,7 @@ const Transactions = () => {
                 };
 
                 return (
-                  <Paper
+                  <Card
                     key={transaction.transactionId}
                     elevation={0}
                     sx={{
@@ -439,7 +439,103 @@ const Transactions = () => {
                       }
                     }}
                   >
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {/* Mobile View */}
+                    <Box sx={{ display: { xs: 'flex', sm: 'none' }, flexDirection: 'column', gap: 1 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Avatar
+                            sx={{
+                              bgcolor: transaction.type === 'income' ? 'success.soft' :
+                                      transaction.type === 'expense' ? 'error.soft' :
+                                      'info.soft',
+                              width: 32,
+                              height: 32
+                            }}
+                          >
+                            {getTransactionIcon()}
+                          </Avatar>
+                          <Box>
+                            <Typography variant="subtitle2" noWrap>
+                              {transaction.description}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {dayjs(transaction.date).format('MMM D, YYYY')}
+                            </Typography>
+                          </Box>
+                        </Box>
+                        <Typography
+                          variant="subtitle2"
+                          sx={{
+                            color: transaction.type === 'income' ? 'success.main' :
+                                   transaction.type === 'expense' ? 'error.main' :
+                                   'info.main',
+                            fontWeight: 500
+                          }}
+                        >
+                          {transaction.type === 'income' ? '+' : 
+                           transaction.type === 'expense' ? '-' : ''}
+                          {formatCurrency(Math.abs(transaction.amount))}
+                        </Typography>
+                      </Box>
+
+                      <Box sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 1,
+                        flexWrap: 'wrap',
+                        mt: 1
+                      }}>
+                        <Chip
+                          size="small"
+                          label={account?.name || ''}
+                          icon={<AccountBalanceWallet sx={{ fontSize: 16 }} />}
+                        />
+                        {category && (
+                          <Chip
+                            size="small"
+                            label={category.name}
+                            icon={<Category sx={{ fontSize: 16 }} />}
+                          />
+                        )}
+                        <Chip
+                          size="small"
+                          label={transaction.paymentMethod.split('_').map(word => 
+                            word.charAt(0).toUpperCase() + word.slice(1)
+                          ).join(' ')}
+                          icon={<Payment sx={{ fontSize: 16 }} />}
+                        />
+                      </Box>
+
+                      <Box sx={{ 
+                        display: 'flex', 
+                        justifyContent: 'flex-end',
+                        gap: 1,
+                        mt: 1
+                      }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            setSelectedTransaction(transaction);
+                            setFormOpen(true);
+                          }}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => {
+                            setTransactionToDelete(transaction);
+                            setDeleteDialog(true);
+                          }}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    </Box>
+
+                    {/* Desktop View */}
+                    <Box sx={{ display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 2 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
                         <Avatar
                           sx={{
@@ -602,7 +698,7 @@ const Transactions = () => {
                         </Box>
                       </Box>
                     </Box>
-                  </Paper>
+                  </Card>
                 );
               })}
             </Stack>
