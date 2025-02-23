@@ -6,6 +6,7 @@ import Transactions from '../pages/Transactions';
 import Categories from '../pages/Categories';
 import Reports from '../pages/Reports';
 import Settings from '../pages/Settings';
+import Banking from '../pages/Banking';
 
 const AppRoutes = () => {
   return (
@@ -17,6 +18,7 @@ const AppRoutes = () => {
         <Route path="/categories" element={<Categories />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/banking" element={<Banking />} />
       </Routes>
     </Layout>
   );

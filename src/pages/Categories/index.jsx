@@ -2,133 +2,86 @@
 import { useState, useEffect } from 'react';
 import {
   Container,
-  Paper,
   Typography,
   Button,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
+  Grid,
+  Card,
+  CardContent,
   IconButton,
   Box,
   Alert,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
+  Stack,
+  Tooltip,
   CircularProgress,
-  Grid,
-  Stack
+  Chip,
+  Divider,
+  useTheme,
+  useMediaQuery,
+  Avatar
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  Refresh as RefreshIcon,
+  Category as CategoryIcon,
+  ShoppingCart,
+  Restaurant,
+  School,
+  DirectionsCar,
+  LocalHospital,
+  LocalPlay,
+  FlightTakeoff,
+  AccountBalance,
+  Receipt,
+  Payments
 } from '@mui/icons-material';
 import CategoryForm from '../../components/CategoryForm';
 import DatabaseService from '../../services/DatabaseService';
-
-const CATEGORY_ICONS = [
-  { icon: '🛒', label: 'Shopping' },
-  { icon: '🍽️', label: 'Food & Dining' },
-  { icon: '🏠', label: 'Housing' },
-  { icon: '🚗', label: 'Transportation' },
-  { icon: '💊', label: 'Healthcare' },
-  { icon: '🎮', label: 'Entertainment' },
-  { icon: '📚', label: 'Education' },
-  { icon: '💼', label: 'Business' },
-  { icon: '✈️', label: 'Travel' },
-  { icon: '🏦', label: 'Banking' },
-  { icon: '📱', label: 'Utilities' },
-  { icon: '🎁', label: 'Gifts' },
-  { icon: '💰', label: 'Income' },
-  { icon: '💳', label: 'Credit Card' },
-  { icon: '🏢', label: 'Rent' }
-];
-
-// eslint-disable-next-line no-unused-vars
-const IconSelector = ({ value, onChange, disabled }) => (
-  <FormControl fullWidth margin="dense">
-    <InputLabel>Icon</InputLabel>
-    <Select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      renderValue={(selected) => (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <span style={{ fontSize: '1.5rem' }}>{selected}</span>
-          <Typography variant="body2">
-            {CATEGORY_ICONS.find(item => item.icon === selected)?.label || 'Custom Icon'}
-          </Typography>
-        </Box>
-      )}
-    >
-      {CATEGORY_ICONS.map((item) => (
-        <MenuItem key={item.icon} value={item.icon}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: '1.5rem' }}>{item.icon}</span>
-            <Typography>{item.label}</Typography>
-          </Box>
-        </MenuItem>
-      ))}
-    </Select>
-  </FormControl>
-);
+import { useApp } from '../../contexts/AppContext';
 
 const Categories = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const { currentBank, currentYear } = useApp();
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
 
+  useEffect(() => {
+    loadCategories();
+  }, [currentBank, currentYear]);
+
   const loadCategories = async () => {
     try {
       setLoading(true);
-      setError(null);
-      const bankId = 1; // TODO: Get from context
-      const year = new Date().getFullYear();
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
       
-      // Initialize database first
       await DatabaseService.initializeDatabase();
-      
-      // Create tables if they don't exist
       await DatabaseService.createBankYearTables(bankId, year);
-      
-      // Ensure default categories exist
       await DatabaseService.createDefaultCategories(bankId, year);
       
-      // Get all categories including defaults
       const data = await DatabaseService.getCategories(bankId, year);
-      
-      if (!data || data.length === 0) {
-        console.warn('No categories found, creating defaults...');
-        await DatabaseService.createDefaultCategories(bankId, year);
-        const freshData = await DatabaseService.getCategories(bankId, year);
-        setCategories(freshData || []);
-      } else {
-        setCategories(data);
-      }
+      setCategories(data || []);
+      setError(null);
     } catch (error) {
-      console.error('Error loading categories:', error);
       setError('Failed to load categories: ' + error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadCategories();
-  }, []);
-
   const handleCreateCategory = async (categoryData) => {
     try {
-      setError(null);
-      const bankId = 1;
-      const year = new Date().getFullYear();
-      await DatabaseService.createCategory(bankId, year, categoryData);
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+      await DatabaseService.addCategory(bankId, year, categoryData);
       await loadCategories();
       setIsFormOpen(false);
+      setError(null);
     } catch (error) {
       setError('Failed to create category: ' + error.message);
     }
@@ -136,13 +89,42 @@ const Categories = () => {
 
   const handleUpdateCategory = async (categoryData) => {
     try {
-      setError(null);
-      const bankId = 1;
-      const year = new Date().getFullYear();
-      await DatabaseService.updateCategory(bankId, year, selectedCategory.categoryId, categoryData);
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+      const tableName = `categories_${bankId}_${year}`;
+
+      // Prepare the category data
+      const updatedCategory = {
+        name: categoryData.name,
+        type: categoryData.type,
+        color_code: categoryData.colorCode,
+        icon: categoryData.icon,
+        updated_at: new Date().toISOString()
+      };
+
+      // Use direct SQL update instead of addCategory
+      await DatabaseService.db.exec(`
+        UPDATE ${tableName}
+        SET name = ?,
+            type = ?,
+            color_code = ?,
+            icon = ?,
+            updated_at = ?
+        WHERE category_id = ?
+      `, [
+        updatedCategory.name,
+        updatedCategory.type,
+        updatedCategory.color_code,
+        updatedCategory.icon,
+        updatedCategory.updated_at,
+        selectedCategory.categoryId
+      ]);
+
+      await DatabaseService.saveToIndexedDB();
       await loadCategories();
       setIsFormOpen(false);
       setSelectedCategory(null);
+      setError(null);
     } catch (error) {
       setError('Failed to update category: ' + error.message);
     }
@@ -150,11 +132,9 @@ const Categories = () => {
 
   const handleDeleteCategory = async (categoryId) => {
     try {
-      setError(null);
-      const bankId = 1;
-      const year = new Date().getFullYear();
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
       
-      // Get category details first
       const categoryToDelete = categories.find(c => c.categoryId === categoryId);
       if (categoryToDelete?.isDefault) {
         setError('Cannot delete default categories');
@@ -163,109 +143,306 @@ const Categories = () => {
       
       await DatabaseService.deleteCategory(bankId, year, categoryId);
       await loadCategories();
+      setError(null);
     } catch (error) {
       setError(error.message || 'Failed to delete category');
     }
   };
 
+  const getCategoryIcon = (categoryName) => {
+    switch(categoryName?.toLowerCase()) {
+      case 'shopping': return <ShoppingCart />;
+      case 'food & dining': return <Restaurant />;
+      case 'education': return <School />;
+      case 'transportation': return <DirectionsCar />;
+      case 'healthcare': return <LocalHospital />;
+      case 'entertainment': return <LocalPlay />;
+      case 'travel': return <FlightTakeoff />;
+      case 'bills & utilities': return <Receipt />;
+      case 'income': return <Payments />;
+      default: return <CategoryIcon />;
+    }
+  };
+
+  const expenseCategories = categories.filter(c => c.type === 'expense');
+  const incomeCategories = categories.filter(c => c.type === 'income');
+
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h4" component="h1">
-          Categories
-        </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => {
-            setSelectedCategory(null);
-            setIsFormOpen(true);
-          }}
-        >
-          Add Category
-        </Button>
+    <Container maxWidth="xl" sx={{ py: 4 }}>
+      {/* Header Section */}
+      <Box sx={{ mb: 4 }}>
+        <Grid container spacing={3} alignItems="center">
+          <Grid item xs={12} md={6}>
+            <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
+              Categories
+            </Typography>
+            <Typography color="text.secondary" variant="body1">
+              Manage your expense and income categories
+            </Typography>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Stack 
+              direction={{ xs: 'column', sm: 'row' }} 
+              spacing={2}
+              justifyContent={{ xs: 'flex-start', md: 'flex-end' }}
+            >
+              <Button
+                variant="outlined"
+                startIcon={<RefreshIcon />}
+                onClick={loadCategories}
+                disabled={loading}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => {
+                  setSelectedCategory(null);
+                  setIsFormOpen(true);
+                }}
+                disabled={loading}
+              >
+                Add Category
+              </Button>
+            </Stack>
+          </Grid>
+        </Grid>
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
-      <Paper>
-        {loading ? (
-          <Box sx={{ p: 4, textAlign: 'center' }}>
-            <CircularProgress />
-            <Typography sx={{ mt: 2 }}>Loading categories...</Typography>
-          </Box>
-        ) : categories.length === 0 ? (
-          <Box sx={{ p: 4, textAlign: 'center' }}>
-            <Typography color="text.secondary">
-              No categories found. Click "Add Category" to create one.
-            </Typography>
-          </Box>
-        ) : (
-          <Grid container spacing={{ xs: 2, sm: 3 }}>
-            <Grid item xs={12} md={6}>
-              <Typography variant="h6" sx={{ mb: { xs: 1, sm: 2 } }}>
-                Expense Categories
-              </Typography>
-              <Stack spacing={{ xs: 1, sm: 2 }}>
-                {categories.map((category) => (
-                  <ListItem
+      {loading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+          <CircularProgress />
+        </Box>
+      ) : (
+        <Grid container spacing={4}>
+          {/* Expense Categories */}
+          <Grid item xs={12} md={6}>
+            <Card>
+              <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="h6">
+                  Expense Categories
+                  <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>
+                    ({expenseCategories.length})
+                  </Typography>
+                </Typography>
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<AddIcon />}
+                  onClick={() => {
+                    setSelectedCategory(null);
+                    setIsFormOpen(true);
+                  }}
+                >
+                  Add
+                </Button>
+              </Box>
+              <Divider />
+              <Stack spacing={1} sx={{ p: 2 }}>
+                {expenseCategories.map((category) => (
+                  <Card
                     key={category.categoryId}
+                    elevation={0}
                     sx={{
-                      borderLeft: `4px solid ${category.colorCode || category.color || '#000000'}`,
-                      opacity: category.isDefault ? 0.7 : 1
+                      p: 2,
+                      border: 1,
+                      borderColor: 'divider',
+                      borderRadius: 2,
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                        '& .category-actions': {
+                          opacity: 1,
+                          visibility: 'visible'
+                        }
+                      }
                     }}
                   >
-                    <ListItemText
-                      primary={
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <span>{category.icon}</span>
-                          <Typography>
-                            {category.name}
-                            {category.isDefault && (
-                              <Typography
-                                component="span"
-                                variant="caption"
-                                sx={{ ml: 1, color: 'text.secondary' }}
-                              >
-                                (Default)
-                              </Typography>
-                            )}
-                          </Typography>
-                        </Box>
-                      }
-                      secondary={category.type}
-                    />
-                    <ListItemSecondaryAction>
-                      <IconButton
-                        edge="end"
-                        onClick={() => {
-                          setSelectedCategory(category);
-                          setIsFormOpen(true);
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Avatar
+                        sx={{
+                          bgcolor: category.colorCode + '20',
+                          color: category.colorCode,
+                          width: 40,
+                          height: 40
                         }}
-                        disabled={category.isDefault}
                       >
-                        <EditIcon />
-                      </IconButton>
-                      <IconButton
-                        edge="end"
-                        onClick={() => handleDeleteCategory(category.categoryId)}
-                        disabled={category.isDefault}
-                        sx={{ ml: 1 }}
+                        {getCategoryIcon(category.name)}
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                          {category.name}
+                          {category.isDefault && (
+                            <Chip
+                              label="Default"
+                              size="small"
+                              sx={{ ml: 1, bgcolor: 'primary.soft', color: 'primary.main' }}
+                            />
+                          )}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {category.type.charAt(0).toUpperCase() + category.type.slice(1)}
+                        </Typography>
+                      </Box>
+                      <Box 
+                        className="category-actions"
+                        sx={{
+                          opacity: 0,
+                          visibility: 'hidden',
+                          transition: 'all 0.2s ease-in-out',
+                          display: 'flex',
+                          gap: 1
+                        }}
                       >
-                        <DeleteIcon />
-                      </IconButton>
-                    </ListItemSecondaryAction>
-                  </ListItem>
+                        <Tooltip title="Edit">
+                          <IconButton
+                            size="small"
+                            onClick={() => {
+                              setSelectedCategory(category);
+                              setIsFormOpen(true);
+                            }}
+                            disabled={category.isDefault}
+                          >
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={category.isDefault ? "Cannot delete default category" : "Delete"}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => handleDeleteCategory(category.categoryId)}
+                              disabled={category.isDefault}
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Box>
+                    </Box>
+                  </Card>
                 ))}
               </Stack>
-            </Grid>
+            </Card>
           </Grid>
-        )}
-      </Paper>
+
+          {/* Income Categories */}
+          <Grid item xs={12} md={6}>
+            <Card>
+              <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="h6">
+                  Income Categories
+                  <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>
+                    ({incomeCategories.length})
+                  </Typography>
+                </Typography>
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<AddIcon />}
+                  onClick={() => {
+                    setSelectedCategory(null);
+                    setIsFormOpen(true);
+                  }}
+                >
+                  Add
+                </Button>
+              </Box>
+              <Divider />
+              <Stack spacing={1} sx={{ p: 2 }}>
+                {incomeCategories.map((category) => (
+                  <Card
+                    key={category.categoryId}
+                    elevation={0}
+                    sx={{
+                      p: 2,
+                      border: 1,
+                      borderColor: 'divider',
+                      borderRadius: 2,
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                        '& .category-actions': {
+                          opacity: 1,
+                          visibility: 'visible'
+                        }
+                      }
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Avatar
+                        sx={{
+                          bgcolor: category.colorCode + '20',
+                          color: category.colorCode,
+                          width: 40,
+                          height: 40
+                        }}
+                      >
+                        {getCategoryIcon(category.name)}
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                          {category.name}
+                          {category.isDefault && (
+                            <Chip
+                              label="Default"
+                              size="small"
+                              sx={{ ml: 1, bgcolor: 'primary.soft', color: 'primary.main' }}
+                            />
+                          )}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {category.type.charAt(0).toUpperCase() + category.type.slice(1)}
+                        </Typography>
+                      </Box>
+                      <Box 
+                        className="category-actions"
+                        sx={{
+                          opacity: 0,
+                          visibility: 'hidden',
+                          transition: 'all 0.2s ease-in-out',
+                          display: 'flex',
+                          gap: 1
+                        }}
+                      >
+                        <Tooltip title="Edit">
+                          <IconButton
+                            size="small"
+                            onClick={() => {
+                              setSelectedCategory(category);
+                              setIsFormOpen(true);
+                            }}
+                            disabled={category.isDefault}
+                          >
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={category.isDefault ? "Cannot delete default category" : "Delete"}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => handleDeleteCategory(category.categoryId)}
+                              disabled={category.isDefault}
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Box>
+                    </Box>
+                  </Card>
+                ))}
+              </Stack>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
 
       <CategoryForm
         open={isFormOpen}

@@ -23,14 +23,12 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  TextField
+  TextField,
+  useMediaQuery
 } from '@mui/material';
 import {
   TrendingUp,
   MoreVert,
-  Add as AddIcon,
-  ArrowUpward,
-  ArrowDownward,
   AccountBalance,
   TrendingDown,
   Savings,
@@ -38,7 +36,8 @@ import {
   Payment,
   AccountBalanceWallet,
   LocalAtm,
-  ArrowForward
+  ArrowForward,
+  Add as AddIcon
 } from '@mui/icons-material';
 import {
   AreaChart,
@@ -65,18 +64,31 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { useNavigate } from 'react-router-dom';
 
 const chartColors = {
-  income: '#4CAF50',
-  expense: '#F44336',
+  income: '#10B981',
+  expense: '#EF4444',
   transfer: '#2196F3',
   gradient: {
-    income: ['#4CAF50', '#81C784'],
-    expense: ['#F44336', '#E57373'],
-    balance: ['#2196F3', '#64B5F6']
+    income: ['rgba(16, 185, 129, 0.2)', 'rgba(16, 185, 129, 0.0)'],
+    expense: ['rgba(239, 68, 68, 0.2)', 'rgba(239, 68, 68, 0.0)']
+  }
+};
+
+const DASHBOARD_STYLES = {
+  cardShadow: {
+    xs: '0 2px 4px rgba(0,0,0,0.1)',
+    md: '0 4px 8px rgba(0,0,0,0.12)'
+  },
+  gradients: {
+    primary: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
+    success: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+    error: 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)',
+    info: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)'
   }
 };
 
 const Dashboard = () => {
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { currentBank, currentYear } = useApp();
   const [accounts, setAccounts] = useState([]);
   const { currency } = useRegion();
@@ -84,25 +96,6 @@ const Dashboard = () => {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [transactionForm, setTransactionForm] = useState({
-    open: false,
-    mode: 'add',
-    data: null,
-    loading: false,
-    error: null
-  });
-
-  const [formData, setFormData] = useState({
-    type: 'expense',
-    amount: '',
-    date: dayjs(),
-    accountId: '',
-    toAccountId: '',
-    categoryId: '',
-    description: '',
-    paymentMethod: 'cash',
-    location: ''
-  });
 
   const navigate = useNavigate();
 
@@ -176,44 +169,79 @@ const Dashboard = () => {
   };
 
   const getMonthlyData = () => {
-    const monthlyData = Array(12).fill(0).map((_, i) => ({
-      name: new Date(2024, i).toLocaleString('default', { month: 'short' }),
-      income: 0,
-      expenses: 0
-    }));
+    const monthlyData = [];
+    const year = currentYear || new Date().getFullYear();
+    const currentMonth = new Date().getMonth();
 
-    transactions.forEach(t => {
-      const month = new Date(t.date).getMonth();
-      if (t.type === 'income') {
-        monthlyData[month].income += t.amount;
-      } else if (t.type === 'expense') {
-        monthlyData[month].expenses += Math.abs(t.amount);
+    // Calculate how many months to show (minimum 6)
+    const monthsToShow = Math.max(6, currentMonth + 1);
+    
+    // Get data for all months up to current month
+    for (let i = 0; i < 12; i++) {
+      const month = new Date(year, i, 1);
+      
+      // For past and current months, calculate actual data
+      if (i <= currentMonth) {
+        const monthIncome = transactions
+          .filter(t => {
+            const txDate = new Date(t.date);
+            return t.type === 'income' && 
+                   txDate.getMonth() === month.getMonth() && 
+                   txDate.getFullYear() === month.getFullYear();
+          })
+          .reduce((sum, t) => sum + t.amount, 0);
+
+        const monthExpenses = transactions
+          .filter(t => {
+            const txDate = new Date(t.date);
+            return t.type === 'expense' && 
+                   txDate.getMonth() === month.getMonth() && 
+                   txDate.getFullYear() === month.getFullYear();
+          })
+          .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+        monthlyData.push({
+          name: month.toLocaleString('default', { month: 'short' }),
+          income: monthIncome,
+          expenses: monthExpenses,
+          balance: monthIncome - monthExpenses
+        });
+      } else {
+        // For future months, show zero values
+        monthlyData.push({
+          name: month.toLocaleString('default', { month: 'short' }),
+          income: 0,
+          expenses: 0,
+          balance: 0
+        });
       }
-    });
+    }
 
     return monthlyData;
   };
 
   const getCategoryData = () => {
-    const categoryMap = new Map();
+    const categoryTotals = {};
     
     transactions
       .filter(t => t.type === 'expense')
-      .forEach(t => {
-        const category = categories.find(c => c.categoryId === t.categoryId);
+      .forEach(transaction => {
+        const category = categories.find(c => c.categoryId === transaction.categoryId);
         if (category) {
-          const amount = Math.abs(t.amount);
-          categoryMap.set(category.name, (categoryMap.get(category.name) || 0) + amount);
+          if (!categoryTotals[category.name]) {
+            categoryTotals[category.name] = 0;
+          }
+          categoryTotals[category.name] += Math.abs(transaction.amount);
         }
       });
 
-    return Array.from(categoryMap, ([name, value]) => ({ name, value }));
+    return Object.entries(categoryTotals)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5); // Show top 5 categories
   };
 
-  const COLORS = [
-    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD',
-    '#D4A5A5', '#9B6B6B', '#E9D985', '#556270', '#6C5B7B'
-  ];
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 
   const totalBalance = getTotalBalance();
   const monthlyIncome = getMonthlyIncome();
@@ -231,10 +259,10 @@ const Dashboard = () => {
         return txDate.getMonth() === lastMonth.getMonth() && 
                txDate.getFullYear() === lastMonth.getFullYear();
       })
-      .reduce((sum, t) => {
-        if (t.type === 'income') return sum + t.amount;
-        if (t.type === 'expense') return sum - Math.abs(t.amount);
-        return sum;
+      .reduce((balance, t) => {
+        if (t.type === 'income') return balance + t.amount;
+        if (t.type === 'expense') return balance - Math.abs(t.amount);
+        return balance;
       }, 0);
   };
 
@@ -356,93 +384,6 @@ const Dashboard = () => {
     }
   ];
 
-  const handleOpenTransactionForm = (mode = 'add', data = null) => {
-    setTransactionForm(prev => ({
-      ...prev,
-      open: true,
-      mode,
-      data,
-      error: null
-    }));
-  };
-
-  const handleCloseTransactionForm = () => {
-    setTransactionForm(prev => ({
-      ...prev,
-      open: false,
-      mode: 'add',
-      data: null,
-      error: null
-    }));
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    await handleTransactionSubmit(formData);
-  };
-
-  const handleTransactionSubmit = async (formData) => {
-    setTransactionForm(prev => ({ ...prev, loading: true, error: null }));
-    
-    try {
-      const bankId = currentBank?.bankId || 1;
-      const year = currentYear || new Date().getFullYear();
-
-      // Special handling for transfers
-      if (formData.type === 'transfer') {
-        // For transfers, we need to:
-        // 1. Deduct from source account (negative amount)
-        // 2. Add to destination account (positive amount)
-        const transferAmount = Math.abs(Number(formData.amount));
-
-        const transferData = {
-          ...formData,
-          date: dayjs(formData.date).format('YYYY-MM-DD'),
-          bankId,
-          year,
-          amount: -transferAmount, // Make amount negative for source account
-          type: 'transfer',
-          categoryId: null // Transfers don't need category
-        };
-
-        if (transactionForm.mode === 'edit') {
-          await DatabaseService.updateTransaction(bankId, year, transferData);
-        } else {
-          await DatabaseService.addTransaction(bankId, year, transferData);
-        }
-      } else {
-        // For regular transactions (income/expense)
-        const amount = formData.type === 'expense' 
-          ? -Math.abs(Number(formData.amount)) // Make expenses negative
-          : Math.abs(Number(formData.amount));  // Keep income positive
-
-        const transactionData = {
-          ...formData,
-          date: dayjs(formData.date).format('YYYY-MM-DD'),
-          bankId,
-          year,
-          amount: amount
-        };
-
-        if (transactionForm.mode === 'edit') {
-          await DatabaseService.updateTransaction(bankId, year, transactionData);
-        } else {
-          await DatabaseService.addTransaction(bankId, year, transactionData);
-        }
-      }
-
-      handleCloseTransactionForm();
-      await fetchData();
-    } catch (err) {
-      setTransactionForm(prev => ({ 
-        ...prev, 
-        error: err.message || 'Failed to save transaction' 
-      }));
-    } finally {
-      setTransactionForm(prev => ({ ...prev, loading: false }));
-    }
-  };
-
   const getTransactionIcon = (type) => {
     switch (type) {
       case 'income':
@@ -457,226 +398,276 @@ const Dashboard = () => {
   };
 
   return (
-    <Container maxWidth="xl">
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-        <Typography variant="h4" component="h1">
+    <Container 
+      maxWidth="2xl" 
+      sx={{ 
+        py: { xs: 2, sm: 3, md: 4 },
+        px: { xs: 1, sm: 2, md: 3 }
+      }}
+    >
+      {/* Header Section */}
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
           Dashboard
         </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenTransactionForm('add')}
-        >
-          Add Transaction
-        </Button>
       </Box>
 
-      <Grid container spacing={{ xs: 2, sm: 3 }}>
-        {/* Summary Cards */}
-        <Grid item xs={12} sm={6} md={3}>
-          <Card
-            sx={{
-              p: { xs: 2, sm: 3 },
-              height: '100%'
-            }}
-          >
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography color="text.secondary" variant="subtitle2">
-                  {summaryCards[0].title}
-                </Typography>
+      {/* Summary Cards Grid */}
+      <Grid 
+        container 
+        spacing={{ xs: 2, sm: 3 }}
+        sx={{ mb: { xs: 2, sm: 3, md: 4 } }}
+      >
+        {summaryCards.map((card, index) => (
+          <Grid item xs={12} sm={6} md={3} key={card.title}>
+            <Card
+              sx={{
+                height: '100%',
+                background: index === 0 ? DASHBOARD_STYLES.gradients.primary :
+                           index === 1 ? DASHBOARD_STYLES.gradients.success :
+                           index === 2 ? DASHBOARD_STYLES.gradients.error :
+                           DASHBOARD_STYLES.gradients.info,
+                color: 'white',
+                boxShadow: DASHBOARD_STYLES.cardShadow,
+                transition: 'transform 0.2s ease-in-out',
+                '&:hover': {
+                  transform: 'translateY(-4px)'
+                }
+              }}
+            >
+              <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
                 <Box sx={{ 
-                  p: 1, 
-                  borderRadius: 1, 
-                  bgcolor: `${summaryCards[0].color}15`
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  mb: 2 
                 }}>
-                  {React.isValidElement(summaryCards[0].icon) 
-                    ? React.cloneElement(summaryCards[0].icon, { sx: { color: summaryCards[0].color } })
-                    : summaryCards[0].icon
-                  }
-                </Box>
-              </Box>
-              <Typography variant="h4" fontWeight="bold" sx={{ color: summaryCards[0].color }}>
-                {summaryCards[0].value}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} sm={6} md={3}>
-          <Card
-            sx={{
-              p: { xs: 2, sm: 3 },
-              height: '100%'
-            }}
-          >
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography color="text.secondary" variant="subtitle2">
-                  {summaryCards[1].title}
-                </Typography>
-                <Box sx={{ 
-                  p: 1, 
-                  borderRadius: 1, 
-                  bgcolor: `${summaryCards[1].color}15`
-                }}>
-                  {React.isValidElement(summaryCards[1].icon) 
-                    ? React.cloneElement(summaryCards[1].icon, { sx: { color: summaryCards[1].color } })
-                    : summaryCards[1].icon
-                  }
-                </Box>
-              </Box>
-              <Typography variant="h4" fontWeight="bold" sx={{ color: summaryCards[1].color }}>
-                {summaryCards[1].value}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} sm={6} md={3}>
-          <Card
-            sx={{
-              p: { xs: 2, sm: 3 },
-              height: '100%'
-            }}
-          >
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography color="text.secondary" variant="subtitle2">
-                  {summaryCards[2].title}
-                </Typography>
-                <Box sx={{ 
-                  p: 1, 
-                  borderRadius: 1, 
-                  bgcolor: `${summaryCards[2].color}15`
-                }}>
-                  {React.isValidElement(summaryCards[2].icon) 
-                    ? React.cloneElement(summaryCards[2].icon, { sx: { color: summaryCards[2].color } })
-                    : summaryCards[2].icon
-                  }
-                </Box>
-              </Box>
-              <Typography variant="h4" fontWeight="bold" sx={{ color: summaryCards[2].color }}>
-                {summaryCards[2].value}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12} sm={6} md={3}>
-          <Card
-            sx={{
-              p: { xs: 2, sm: 3 },
-              height: '100%'
-            }}
-          >
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography color="text.secondary" variant="subtitle2">
-                  {summaryCards[3].title}
-                </Typography>
-                <Box sx={{ 
-                  p: 1, 
-                  borderRadius: 1, 
-                  bgcolor: `${summaryCards[3].color}15`
-                }}>
-                  {React.isValidElement(summaryCards[3].icon) 
-                    ? React.cloneElement(summaryCards[3].icon, { sx: { color: summaryCards[3].color } })
-                    : summaryCards[3].icon
-                  }
-                </Box>
-              </Box>
-              <Typography variant="h4" fontWeight="bold" sx={{ color: summaryCards[3].color }}>
-                {summaryCards[3].value}
-              </Typography>
-              {summaryCards[3].subtitle && (
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {summaryCards[3].subtitle}
-                </Typography>
-              )}
-              {summaryCards[3].secondaryInfo && (
-                <Box sx={{ mt: 1 }}>
-                  {summaryCards[3].secondaryInfo}
-                </Box>
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Charts */}
-        <Grid item xs={12} md={8}>
-          <Card
-            sx={{
-              p: { xs: 2, sm: 3 },
-              height: { xs: 'auto', md: '400px' }
-            }}
-          >
-            {/* Monthly Trends Chart */}
-            <Typography variant="h6" gutterBottom>
-              Monthly Trends
-            </Typography>
-            <Box sx={{ height: 350 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={getMonthlyData()}>
-                  <defs>
-                    <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={chartColors.gradient.income[0]} stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor={chartColors.gradient.income[1]} stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorExpenses" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={chartColors.gradient.expense[0]} stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor={chartColors.gradient.expense[1]} stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
-                  <XAxis 
-                    dataKey="name" 
-                    stroke={theme.palette.text.secondary}
-                    style={{ fontSize: '0.75rem' }}
-                  />
-                  <YAxis 
-                    stroke={theme.palette.text.secondary}
-                    style={{ fontSize: '0.75rem' }}
-                    tickFormatter={(value) => formatCurrency(value)}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: theme.palette.background.paper,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 8
+                  <Typography 
+                    sx={{ 
+                      fontSize: '1rem',
+                      opacity: 0.9
                     }}
-                    formatter={(value) => [formatCurrency(value), '']}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="income"
-                    stroke={chartColors.income}
-                    fill="url(#colorIncome)"
-                    strokeWidth={2}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="expenses"
-                    stroke={chartColors.expense}
-                    fill="url(#colorExpenses)"
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </Box>
+                  >
+                    {card.title}
+                  </Typography>
+                  <Box sx={{ 
+                    p: 1, 
+                    borderRadius: 1,
+                    bgcolor: 'rgba(255, 255, 255, 0.1)'
+                  }}>
+                    {card.icon}
+                  </Box>
+                </Box>
+                <Typography 
+                  variant="h4" 
+                  sx={{ 
+                    fontSize: { xs: '1.5rem', sm: '2rem' },
+                    fontWeight: 600,
+                    mb: 1
+                  }}
+                >
+                  {card.value}
+                </Typography>
+                {card.subtitle && (
+                  <Typography 
+                    variant="body2" 
+                    sx={{ 
+                      opacity: 0.9,
+                      fontSize: '0.875rem'
+                    }}
+                  >
+                    {card.subtitle}
+                  </Typography>
+                )}
+                {card.secondaryInfo && (
+                  <Box sx={{ mt: 1, opacity: 0.9 }}>
+                    {card.secondaryInfo}
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+
+      {/* Main Content Grid */}
+      <Grid container spacing={{ xs: 2, sm: 3 }}>
+        {/* Charts Section */}
+        <Grid item xs={12} lg={8}>
+          <Card sx={{ 
+            mb: { xs: 2, sm: 3 },
+            boxShadow: DASHBOARD_STYLES.cardShadow
+          }}>
+            <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+              <Box sx={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                mb: 3 
+              }}>
+                <Typography 
+                  variant="h6" 
+                  sx={{ 
+                    fontSize: { xs: '1.1rem', sm: '1.25rem' },
+                    fontWeight: 600
+                  }}
+                >
+                  Monthly Trends
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box 
+                      sx={{ 
+                        width: 12, 
+                        height: 12, 
+                        borderRadius: '50%', 
+                        bgcolor: chartColors.income 
+                      }} 
+                    />
+                    <Typography variant="caption" color="text.secondary">Income</Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box 
+                      sx={{ 
+                        width: 12, 
+                        height: 12, 
+                        borderRadius: '50%', 
+                        bgcolor: chartColors.expense 
+                      }} 
+                    />
+                    <Typography variant="caption" color="text.secondary">Expenses</Typography>
+                  </Box>
+                </Box>
+              </Box>
+              <Box sx={{ 
+                height: { xs: 300, sm: 350, md: 400 },
+                width: '100%',
+                '.recharts-cartesian-grid-horizontal line:last-child': {
+                  strokeOpacity: 0
+                },
+                '.recharts-cartesian-grid-vertical line:first-child, .recharts-cartesian-grid-vertical line:last-child': {
+                  strokeOpacity: 0
+                }
+              }}>
+                <ResponsiveContainer>
+                  <AreaChart 
+                    data={getMonthlyData()}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                  >
+                    <defs>
+                      <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop 
+                          offset="5%" 
+                          stopColor={chartColors.income} 
+                          stopOpacity={0.2}
+                        />
+                        <stop 
+                          offset="95%" 
+                          stopColor={chartColors.income} 
+                          stopOpacity={0}
+                        />
+                      </linearGradient>
+                      <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop 
+                          offset="5%" 
+                          stopColor={chartColors.expense} 
+                          stopOpacity={0.2}
+                        />
+                        <stop 
+                          offset="95%" 
+                          stopColor={chartColors.expense} 
+                          stopOpacity={0}
+                        />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid 
+                      strokeDasharray="3 3" 
+                      stroke={theme.palette.divider}
+                      opacity={0.5}
+                    />
+                    <XAxis 
+                      dataKey="name" 
+                      stroke={theme.palette.text.secondary}
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={{ stroke: theme.palette.divider }}
+                    />
+                    <YAxis 
+                      stroke={theme.palette.text.secondary}
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={{ stroke: theme.palette.divider }}
+                      tickFormatter={(value) => formatCurrency(value)}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: theme.palette.background.paper,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 8,
+                        boxShadow: theme.shadows[3]
+                      }}
+                      formatter={(value) => [formatCurrency(value), '']}
+                      labelStyle={{ color: theme.palette.text.primary }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="income"
+                      stroke={chartColors.income}
+                      strokeWidth={2}
+                      fill="url(#incomeGradient)"
+                      dot={{
+                        stroke: chartColors.income,
+                        strokeWidth: 2,
+                        fill: theme.palette.background.paper,
+                        r: 4
+                      }}
+                      activeDot={{
+                        stroke: chartColors.income,
+                        strokeWidth: 2,
+                        fill: theme.palette.background.paper,
+                        r: 6
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="expenses"
+                      stroke={chartColors.expense}
+                      strokeWidth={2}
+                      fill="url(#expenseGradient)"
+                      dot={{
+                        stroke: chartColors.expense,
+                        strokeWidth: 2,
+                        fill: theme.palette.background.paper,
+                        r: 4
+                      }}
+                      activeDot={{
+                        stroke: chartColors.expense,
+                        strokeWidth: 2,
+                        fill: theme.palette.background.paper,
+                        r: 6
+                      }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </Box>
+            </CardContent>
           </Card>
 
-          {/* Recent Activity */}
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                <Typography variant="h6">Recent Activity</Typography>
+          {/* Recent Activity Card */}
+          <Card sx={{ boxShadow: DASHBOARD_STYLES.cardShadow }}>
+            <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+              <Box sx={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                mb: 3 
+              }}>
+                <Typography 
+                  variant="h6"
+                  sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}
+                >
+                  Recent Activity
+                </Typography>
                 <Button 
                   size="small" 
                   endIcon={<ArrowForward />}
@@ -685,6 +676,7 @@ const Dashboard = () => {
                   View All
                 </Button>
               </Box>
+              
               <Stack spacing={2}>
                 {transactions.slice(0, 5).map((transaction) => {
                   const isTransfer = transaction.type === 'transfer';
@@ -772,9 +764,12 @@ const Dashboard = () => {
         </Grid>
 
         {/* Right Sidebar */}
-        <Grid item xs={12} md={4}>
-          {/* Accounts Overview */}
-          <Card sx={{ mb: 3 }}>
+        <Grid item xs={12} lg={4}>
+          {/* Accounts Overview Card */}
+          <Card sx={{ 
+            mb: { xs: 2, sm: 3 },
+            boxShadow: DASHBOARD_STYLES.cardShadow
+          }}>
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                 <Typography variant="h6">
@@ -858,7 +853,7 @@ const Dashboard = () => {
           </Card>
 
           {/* Expense Categories Chart */}
-          <Card>
+          <Card sx={{ boxShadow: DASHBOARD_STYLES.cardShadow }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
                 Expense Categories
@@ -901,172 +896,6 @@ const Dashboard = () => {
           </Card>
         </Grid>
       </Grid>
-
-      <Dialog 
-        open={transactionForm.open} 
-        onClose={handleCloseTransactionForm}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          {transactionForm.mode === 'edit' ? 'Edit Transaction' : 'Add New Transaction'}
-        </DialogTitle>
-        <form onSubmit={handleSubmit}>
-          <DialogContent>
-            <LocalizationProvider dateAdapter={AdapterDayjs}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={4}>
-                  <FormControl fullWidth>
-                    <InputLabel>Type</InputLabel>
-                    <Select
-                      value={formData.type}
-                      onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                      label="Type"
-                    >
-                      <MenuItem value="expense">Expense</MenuItem>
-                      <MenuItem value="income">Income</MenuItem>
-                      <MenuItem value="transfer">Transfer</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                <Grid item xs={12} md={4}>
-                  <TextField
-                    fullWidth
-                    label="Amount"
-                    type="number"
-                    value={formData.amount}
-                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                    required
-                    inputProps={{ step: "0.01" }}
-                  />
-                </Grid>
-
-                <Grid item xs={12} md={4}>
-                  <DatePicker
-                    label="Date"
-                    value={formData.date}
-                    onChange={(newDate) => setFormData({ ...formData, date: newDate })}
-                    slotProps={{ textField: { fullWidth: true } }}
-                  />
-                </Grid>
-
-                <Grid item xs={12} md={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Account</InputLabel>
-                    <Select
-                      value={formData.accountId}
-                      onChange={(e) => setFormData({ ...formData, accountId: e.target.value })}
-                      label="Account"
-                      required
-                    >
-                      {accounts.map(account => (
-                        <MenuItem key={account.accountId} value={account.accountId}>
-                          {account.name}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                {formData.type === 'transfer' ? (
-                  <Grid item xs={12} md={6}>
-                    <FormControl fullWidth>
-                      <InputLabel>To Account</InputLabel>
-                      <Select
-                        value={formData.toAccountId}
-                        onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
-                        label="To Account"
-                        required
-                      >
-                        {accounts
-                          .filter(account => account.accountId !== formData.accountId)
-                          .map(account => (
-                            <MenuItem key={account.accountId} value={account.accountId}>
-                              {account.name}
-                            </MenuItem>
-                          ))}
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                ) : (
-                  <Grid item xs={12} md={6}>
-                    <FormControl fullWidth>
-                      <InputLabel>Category</InputLabel>
-                      <Select
-                        value={formData.categoryId}
-                        onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                        label="Category"
-                        required
-                      >
-                        {categories
-                          .filter(cat => cat.type === formData.type)
-                          .map(category => (
-                            <MenuItem key={category.categoryId} value={category.categoryId}>
-                              {category.name}
-                            </MenuItem>
-                          ))}
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                )}
-
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Description"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    required
-                  />
-                </Grid>
-
-                <Grid item xs={12} md={3}>
-                  <FormControl fullWidth>
-                    <InputLabel>Payment Method</InputLabel>
-                    <Select
-                      value={formData.paymentMethod}
-                      onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
-                      label="Payment Method"
-                    >
-                      <MenuItem value="cash">Cash</MenuItem>
-                      <MenuItem value="card">Card</MenuItem>
-                      <MenuItem value="bank">Bank Transfer</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                <Grid item xs={12} md={3}>
-                  <TextField
-                    fullWidth
-                    label="Location"
-                    value={formData.location}
-                    onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                  />
-                </Grid>
-              </Grid>
-            </LocalizationProvider>
-
-            {transactionForm.error && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                {transactionForm.error}
-              </Alert>
-            )}
-          </DialogContent>
-          <DialogActions sx={{ p: 2 }}>
-            <Button onClick={handleCloseTransactionForm}>
-              Cancel
-            </Button>
-            <Button 
-              type="submit" 
-              variant="contained"
-              disabled={transactionForm.loading}
-            >
-              {transactionForm.mode === 'edit' ? 'Update' : 'Add'} Transaction
-            </Button>
-          </DialogActions>
-        </form>
-      </Dialog>
     </Container>
   );
 };

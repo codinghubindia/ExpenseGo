@@ -42,7 +42,11 @@ const App = () => {
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
-      <div id="root" role="main">
+      <div 
+        id="root" 
+        role="main"
+        style={{ outline: 'none' }}
+      >
         <AppProvider>
           <ThemedApp systemTheme={systemTheme} />
         </AppProvider>

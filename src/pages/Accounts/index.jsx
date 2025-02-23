@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unescaped-entities */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Container,
   Paper,
@@ -25,15 +25,29 @@ import {
   Alert,
   Snackbar,
   Grid,
-  Card
+  Card,
+  CardContent,
+  Stack,
+  Chip,
+  Tooltip,
+  CircularProgress,
+  Divider,
+  InputAdornment,
+  useTheme,
+  useMediaQuery
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  AccountBalance,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
 import DatabaseService from '../../services/DatabaseService';
 import { useRegion } from '../../contexts/RegionContext';
+import IconSelector from '../../components/IconSelector';
+import DeleteConfirmationDialog from '../../components/Dialogs/DeleteConfirmationDialog';
+import { useApp } from '../../contexts/AppContext';
 
 // Add this constant at the top of your file after imports
 const ACCOUNT_ICONS = [
@@ -54,35 +68,9 @@ const ACCOUNT_ICONS = [
   { icon: '🎓', label: 'Education' }
 ];
 
-// Replace the icon TextField with this IconSelector component
-const IconSelector = ({ value, onChange }) => (
-  <FormControl fullWidth margin="dense">
-    <InputLabel>Icon</InputLabel>
-    <Select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      renderValue={(selected) => (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <span style={{ fontSize: '1.5rem' }}>{selected}</span>
-          <Typography variant="body2">
-            {ACCOUNT_ICONS.find(item => item.icon === selected)?.label || 'Custom Icon'}
-          </Typography>
-        </Box>
-      )}
-    >
-      {ACCOUNT_ICONS.map((item) => (
-        <MenuItem key={item.icon} value={item.icon}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: '1.5rem' }}>{item.icon}</span>
-            <Typography>{item.label}</Typography>
-          </Box>
-        </MenuItem>
-      ))}
-    </Select>
-  </FormControl>
-);
-
 const Accounts = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { currency } = useRegion();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -93,30 +81,40 @@ const Accounts = () => {
     type: 'checking',
     initialBalance: 0,
     currentBalance: 0,
-    colorCode: '#000000',
+    colorCode: '#3B82F6',
     icon: '💰',
-    notes: ''
+    notes: '',
+    currency: currency.code
   });
   const [error, setError] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState(null);
-  const [isMobile, setIsMobile] = useState(false);
+  const { currentBank, currentYear } = useApp();
 
   useEffect(() => {
-    loadAccounts();
-  }, []);
+    loadData();
+  }, [currentBank, currentYear]);
 
-  const loadAccounts = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      await DatabaseService.initializeDatabase(); // Ensure DB is initialized
-      const bankId = 1; // TODO: Get from context
-      const year = new Date().getFullYear();
-      const data = await DatabaseService.getAccounts(bankId, year);
-      setAccounts(data);
+      setError(null);
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+      
+      // Get accounts data
+      const accountsData = await DatabaseService.getAccounts(bankId, year);
+      setAccounts(accountsData);
+      
+      // Recalculate balances
+      await DatabaseService.recalculateAccountBalances(bankId, year);
+      
+      // Get updated accounts data
+      const updatedAccountsData = await DatabaseService.getAccounts(bankId, year);
+      setAccounts(updatedAccountsData);
     } catch (error) {
       console.error('Error loading accounts:', error);
-      // TODO: Show error notification
+      setError('Failed to load accounts. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -125,8 +123,8 @@ const Accounts = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const bankId = 1; // TODO: Get from context
-      const year = new Date().getFullYear();
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
       
       const accountData = {
         ...formData,
@@ -139,7 +137,7 @@ const Accounts = () => {
         await DatabaseService.createAccount(bankId, year, accountData);
       }
       
-      await loadAccounts();
+      await loadData();
       handleCloseDialog();
     } catch (error) {
       console.error('Error saving account:', error);
@@ -150,8 +148,8 @@ const Accounts = () => {
   // Update the handleDelete function
   const handleDelete = async (account) => {
     try {
-      const bankId = 1; // TODO: Get from context
-      const year = new Date().getFullYear();
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
       
       // First check if it's a default account
       if (account.isDefault) {
@@ -190,11 +188,11 @@ const Accounts = () => {
     try {
       if (!accountToDelete) return;
 
-      const bankId = 1; // TODO: Get from context
-      const year = new Date().getFullYear();
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
       
       await DatabaseService.deleteAccount(bankId, year, accountToDelete.accountId);
-      await loadAccounts();
+      await loadData();
       setConfirmDialog(false);
       setAccountToDelete(null);
       setError(null);
@@ -214,7 +212,8 @@ const Accounts = () => {
         currentBalance: account.currentBalance,
         colorCode: account.colorCode,
         icon: account.icon,
-        notes: account.notes || ''
+        notes: account.notes || '',
+        currency: currency.code
       });
     } else {
       setSelectedAccount(null);
@@ -223,9 +222,10 @@ const Accounts = () => {
         type: 'checking',
         initialBalance: 0,
         currentBalance: 0,
-        colorCode: '#000000',
+        colorCode: '#3B82F6',
         icon: '💰',
-        notes: ''
+        notes: '',
+        currency: currency.code
       });
     }
     setOpenDialog(true);
@@ -239,9 +239,10 @@ const Accounts = () => {
       type: 'checking',
       initialBalance: 0,
       currentBalance: 0,
-      colorCode: '#000000',
+      colorCode: '#3B82F6',
       icon: '💰',
-      notes: ''
+      notes: '',
+      currency: currency.code
     });
   };
 
@@ -259,211 +260,374 @@ const Accounts = () => {
     return account.isDefault;
   };
 
+  // Update the refreshBalances function
+  const refreshBalances = async () => {
+    try {
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+      
+      // Recalculate all balances
+      await DatabaseService.recalculateAccountBalances(bankId, year);
+      
+      // Get updated accounts
+      const accountsData = await DatabaseService.getAccounts(bankId, year);
+      setAccounts(accountsData);
+    } catch (error) {
+      setError('Failed to refresh account balances');
+    }
+  };
+
   return (
-    <Container maxWidth="lg">
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">Accounts</Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-        >
-          Add Account
-        </Button>
-      </Box>
-
-      <Grid container spacing={{ xs: 2, sm: 3 }}>
-        <Grid item xs={12} sm={6} md={4}>
-          <Card
-            sx={{
-              height: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              p: { xs: 2, sm: 3 }
-            }}
-          >
-            {/* Account card content */}
-          </Card>
-        </Grid>
-      </Grid>
-
-      <TableContainer component={Paper}>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell>Icon</TableCell>
-              <TableCell>Name</TableCell>
-              <TableCell>Type</TableCell>
-              <TableCell align="right">Initial Balance</TableCell>
-              <TableCell align="right">Current Balance</TableCell>
-              <TableCell>Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={6} align="center">
-                  Loading accounts...
-                </TableCell>
-              </TableRow>
-            ) : accounts.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} align="center">
-                  No accounts found. Click "Add Account" to create one.
-                </TableCell>
-              </TableRow>
-            ) : (
-              accounts.map((account) => (
-                <TableRow key={account.accountId}>
-                  <TableCell>
-                    <span style={{ fontSize: '1.5rem' }}>{account.icon}</span>
-                  </TableCell>
-                  <TableCell>{account.name}</TableCell>
-                  <TableCell>{account.type}</TableCell>
-                  <TableCell align="right">
-                    {formatCurrency(account.initialBalance)}
-                  </TableCell>
-                  <TableCell align="right">
-                    {formatCurrency(account.currentBalance)}
-                  </TableCell>
-                  <TableCell>
-                    <IconButton
-                      color="primary"
-                      onClick={() => handleOpenDialog(account)}
-                    >
-                      <EditIcon />
-                    </IconButton>
-                    <IconButton
-                      color="error"
-                      onClick={() => handleDelete(account)}
-                      disabled={isDeleteDisabled(account)}
-                      title={account.isDefault ? 'Default accounts cannot be deleted' : 'Delete account'}
-                    >
-                      <DeleteIcon />
-                    </IconButton>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-
-      <Dialog
-        fullScreen={isMobile}
-        fullWidth
-        maxWidth="sm"
-        open={openDialog}
-        onClose={handleCloseDialog}
-      >
-        <form onSubmit={handleSubmit}>
-          <DialogTitle>
-            {selectedAccount ? 'Edit Account' : 'New Account'}
-          </DialogTitle>
-          <DialogContent>
-            <TextField
-              autoFocus
-              margin="dense"
-              label="Account Name"
-              fullWidth
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              required
-            />
-            <FormControl fullWidth margin="dense">
-              <InputLabel>Type</InputLabel>
-              <Select
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                required
+    <Box
+      id="main-content"
+      component="main"
+      tabIndex={-1}
+      sx={{
+        outline: 'none',
+        minHeight: '100vh',
+        p: 3
+      }}
+    >
+      <Container maxWidth="xl" sx={{ py: 4 }}>
+        {/* Header Section */}
+        <Box sx={{ mb: 4 }}>
+          <Grid container spacing={3} alignItems="center">
+            <Grid item xs={12} md={6}>
+              <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
+                Accounts
+              </Typography>
+              <Typography color="text.secondary" variant="body1">
+                Manage your financial accounts and track balances
+              </Typography>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Stack 
+                direction={{ xs: 'column', sm: 'row' }} 
+                spacing={2}
+                justifyContent={{ xs: 'flex-start', md: 'flex-end' }}
               >
-                <MenuItem value="checking">Checking</MenuItem>
-                <MenuItem value="savings">Savings</MenuItem>
-                <MenuItem value="credit">Credit Card</MenuItem>
-                <MenuItem value="investment">Investment</MenuItem>
-                <MenuItem value="other">Other</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              margin="dense"
-              label="Initial Balance"
-              type="number"
-              fullWidth
-              value={formData.initialBalance}
-              onChange={(e) => setFormData({ ...formData, initialBalance: parseFloat(e.target.value) })}
-              required
-            />
-            <TextField
-              margin="dense"
-              label="Color"
-              type="color"
-              fullWidth
-              value={formData.colorCode}
-              onChange={(e) => setFormData({ ...formData, colorCode: e.target.value })}
-            />
-            <IconSelector
-              value={formData.icon}
-              onChange={(newIcon) => setFormData({ ...formData, icon: newIcon })}
-            />
-            <TextField
-              margin="dense"
-              label="Notes"
-              fullWidth
-              multiline
-              rows={3}
-              value={formData.notes}
-              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleCloseDialog}>Cancel</Button>
-            <Button type="submit" variant="contained" color="primary">
-              {selectedAccount ? 'Update' : 'Create'}
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshIcon />}
+                  onClick={refreshBalances}
+                  disabled={loading}
+                >
+                  Refresh Balances
+                </Button>
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => handleOpenDialog()}
+                  disabled={loading}
+                >
+                  Add Account
+                </Button>
+              </Stack>
+            </Grid>
+          </Grid>
+        </Box>
+
+        {/* Summary Card */}
+        <Card sx={{ mb: 4, bgcolor: 'primary.main', color: 'primary.contrastText' }}>
+          <CardContent>
+            <Grid container spacing={3} alignItems="center">
+              <Grid item xs={12} md={6}>
+                <Typography variant="h6" gutterBottom>
+                  Total Balance
+                </Typography>
+                <Typography variant="h3" component="div" fontWeight="bold">
+                  {formatCurrency(accounts.reduce((sum, acc) => sum + acc.currentBalance, 0))}
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 1, opacity: 0.8 }}>
+                  Across {accounts.length} account{accounts.length !== 1 ? 's' : ''}
+                </Typography>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <Box sx={{ 
+                  display: 'flex', 
+                  gap: 2, 
+                  justifyContent: { xs: 'flex-start', md: 'flex-end' } 
+                }}>
+                  {/* Add any additional summary metrics here */}
+                </Box>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+
+        {/* Accounts List */}
+        <Card>
+          <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography variant="h6">Account List</Typography>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => handleOpenDialog()}
+              size="small"
+            >
+              Add Account
             </Button>
-          </DialogActions>
-        </form>
-      </Dialog>
+          </Box>
+          <Divider />
+          {loading ? (
+            <Box sx={{ p: 4, textAlign: 'center' }}>
+              <CircularProgress size={32} />
+              <Typography sx={{ mt: 2 }} color="text.secondary">
+                Loading accounts...
+              </Typography>
+            </Box>
+          ) : accounts.length === 0 ? (
+            <Box sx={{ p: 4, textAlign: 'center' }}>
+              <Typography color="text.secondary">
+                No accounts found. Click "Add Account" to create one.
+              </Typography>
+            </Box>
+          ) : (
+            <Stack spacing={1} sx={{ p: 2 }}>
+              {accounts.map((account) => (
+                <Card
+                  key={account.accountId}
+                  sx={{
+                    p: 2,
+                    boxShadow: 'none',
+                    bgcolor: 'background.default',
+                    '&:hover': {
+                      bgcolor: 'action.hover'
+                    }
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Box
+                      sx={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: account.colorCode || 'primary.main',
+                        color: 'white',
+                        fontSize: '1.5rem'
+                      }}
+                    >
+                      {account.icon}
+                    </Box>
+                    <Box sx={{ flexGrow: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                          {account.name}
+                        </Typography>
+                        {account.isDefault && (
+                          <Chip
+                            label="Default"
+                            size="small"
+                            color="primary"
+                            variant="outlined"
+                          />
+                        )}
+                      </Box>
+                      <Typography variant="body2" color="text.secondary">
+                        {account.type.charAt(0).toUpperCase() + account.type.slice(1)}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ textAlign: 'right' }}>
+                      <Typography
+                        variant="subtitle1"
+                        sx={{
+                          fontWeight: 500,
+                          color: account.currentBalance >= 0 ? 'success.main' : 'error.main'
+                        }}
+                      >
+                        {formatCurrency(account.currentBalance)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Initial: {formatCurrency(account.initialBalance)}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Tooltip title="Edit Account">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleOpenDialog(account)}
+                          aria-label={`Edit ${account.name}`}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip 
+                        title={account.isDefault ? 'Default accounts cannot be deleted' : 'Delete Account'}
+                      >
+                        <span>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => handleDelete(account)}
+                            disabled={isDeleteDisabled(account)}
+                            aria-label={
+                              account.isDefault 
+                                ? 'Cannot delete default account' 
+                                : `Delete ${account.name}`
+                            }
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </Box>
+                  </Box>
+                </Card>
+              ))}
+            </Stack>
+          )}
+        </Card>
 
-      <Snackbar 
-        open={Boolean(error)} 
-        autoHideDuration={6000} 
-        onClose={() => setError(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert 
-          onClose={() => setError(null)} 
-          severity="error"
-          variant="filled"
-          sx={{ width: '100%' }}
+        <Snackbar 
+          open={Boolean(error)} 
+          autoHideDuration={6000} 
+          onClose={() => setError(null)}
+          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
         >
-          {error}
-        </Alert>
-      </Snackbar>
-
-      <Dialog
-        open={confirmDialog}
-        onClose={() => setConfirmDialog(false)}
-      >
-        <DialogTitle>Confirm Delete</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Are you sure you want to delete account "{accountToDelete?.name}"? 
-            This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={handleConfirmDelete} 
-            color="error" 
-            variant="contained"
+          <Alert 
+            onClose={() => setError(null)} 
+            severity="error"
+            variant="filled"
+            sx={{ width: '100%' }}
           >
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Container>
+            {error}
+          </Alert>
+        </Snackbar>
+
+        <Dialog
+          open={openDialog}
+          onClose={handleCloseDialog}
+          maxWidth="sm"
+          fullWidth
+          fullScreen={isMobile}
+          aria-labelledby="account-dialog-title"
+          disableEscapeKeyDown
+          keepMounted={false}
+        >
+          <form onSubmit={handleSubmit}>
+            <DialogTitle id="account-dialog-title">
+              {selectedAccount ? 'Edit Account' : 'Add New Account'}
+            </DialogTitle>
+            <DialogContent dividers>
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Account Name"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    required
+                  />
+                </Grid>
+
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Account Type</InputLabel>
+                    <Select
+                      value={formData.type}
+                      onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                      label="Account Type"
+                      required
+                    >
+                      <MenuItem value="checking">Checking</MenuItem>
+                      <MenuItem value="savings">Savings</MenuItem>
+                      <MenuItem value="credit">Credit Card</MenuItem>
+                      <MenuItem value="investment">Investment</MenuItem>
+                      <MenuItem value="cash">Cash</MenuItem>
+                      <MenuItem value="other">Other</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Initial Balance"
+                    type="number"
+                    value={formData.initialBalance}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      initialBalance: Number(e.target.value),
+                      currentBalance: selectedAccount ? formData.currentBalance : Number(e.target.value)
+                    })}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          {currency.symbol}
+                        </InputAdornment>
+                      )
+                    }}
+                  />
+                </Grid>
+
+                <Grid item xs={12} sm={6}>
+                  <IconSelector
+                    value={formData.icon}
+                    onChange={(icon) => setFormData({ ...formData, icon })}
+                  />
+                </Grid>
+
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Color"
+                    type="color"
+                    value={formData.colorCode}
+                    onChange={(e) => setFormData({ ...formData, colorCode: e.target.value })}
+                    sx={{
+                      '& input': {
+                        height: 56,
+                        padding: 1,
+                        width: '100%'
+                      }
+                    }}
+                  />
+                </Grid>
+
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Notes"
+                    multiline
+                    rows={3}
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  />
+                </Grid>
+              </Grid>
+
+              {error && (
+                <Alert severity="error" sx={{ mt: 2 }}>
+                  {error}
+                </Alert>
+              )}
+            </DialogContent>
+            <DialogActions sx={{ p: 2.5 }}>
+              <Button onClick={handleCloseDialog}>Cancel</Button>
+              <Button 
+                type="submit" 
+                variant="contained"
+                disabled={!formData.name.trim()}
+              >
+                {selectedAccount ? 'Update' : 'Create'} Account
+              </Button>
+            </DialogActions>
+          </form>
+        </Dialog>
+
+        <DeleteConfirmationDialog
+          open={confirmDialog}
+          onClose={() => setConfirmDialog(false)}
+          onConfirm={handleConfirmDelete}
+          title="Delete Account"
+          message="Are you sure you want to delete this account? This action cannot be undone."
+          item={accountToDelete}
+        />
+      </Container>
+    </Box>
   );
 };
 
