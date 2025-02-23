@@ -51,37 +51,36 @@ const Categories = () => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
 
-  const loadCategories = useCallback(async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
-      
+
       const [categoriesData, transactionsData] = await Promise.all([
         DatabaseService.getCategories(bankId, year),
         DatabaseService.getTransactions(bankId, year)
       ]);
 
-      setCategories(categoriesData || []);
-      setTransactions(transactionsData || []);
-      setError(null);
+      setCategories(categoriesData);
+      setTransactions(transactionsData.transactions || []);
     } catch (error) {
-      setError('Failed to load categories: ' + error.message);
+      setError('Failed to load categories data');
     } finally {
       setLoading(false);
     }
-  }, [currentBank, currentYear]);
+  };
 
   useEffect(() => {
-    loadCategories();
-  }, [loadCategories]);
+    loadData();
+  }, [currentBank, currentYear]);
 
   const handleCreateCategory = async (categoryData) => {
     try {
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
       await DatabaseService.addCategory(bankId, year, categoryData);
-      await loadCategories();
+      await loadData();
       setIsFormOpen(false);
       setError(null);
     } catch (error) {
@@ -123,7 +122,7 @@ const Categories = () => {
       ]);
 
       await DatabaseService.saveToIndexedDB();
-      await loadCategories();
+      await loadData();
       setIsFormOpen(false);
       setSelectedCategory(null);
       setError(null);
@@ -151,7 +150,7 @@ const Categories = () => {
       }
 
       await DatabaseService.deleteCategory(bankId, year, categoryId);
-      await loadCategories();
+      await loadData();
     } catch (error) {
       setError('Failed to delete category: ' + error.message);
     }
@@ -182,32 +181,65 @@ const Categories = () => {
     }, { expense: [], income: [] });
   }, [categories]);
 
-  const categoryUsage = useMemo(() => {
-    if (!transactions || !categories) return new Map();
+  const categoryStats = useMemo(() => {
+    if (!transactions || !Array.isArray(transactions)) return new Map();
 
-    return transactions.reduce((usage, transaction) => {
-      if (transaction.categoryId) {
-        const count = usage.get(transaction.categoryId) || 0;
-        usage.set(transaction.categoryId, count + 1);
+    return transactions.reduce((stats, transaction) => {
+      // Skip transfer transactions and transactions without categories
+      if (transaction.type === 'transfer' || !transaction.categoryId) return stats;
+
+      const categoryId = transaction.categoryId;
+      if (!stats.has(categoryId)) {
+        stats.set(categoryId, {
+          income: 0,
+          expenses: 0,
+          total: 0,
+          count: 0
+        });
       }
-      return usage;
-    }, new Map());
-  }, [transactions, categories]);
 
-  const categoryTotals = useMemo(() => {
-    if (!transactions || !categories) return new Map();
+      const amount = Math.abs(transaction.amount);
+      const categoryStats = stats.get(categoryId);
+
+      if (transaction.type === 'income') {
+        categoryStats.income += amount;
+      } else if (transaction.type === 'expense') {
+        categoryStats.expenses += amount;
+      }
+
+      categoryStats.total += amount;
+      categoryStats.count += 1;
+
+      return stats;
+    }, new Map());
+  }, [transactions]);
+
+  const totalStats = useMemo(() => {
+    if (!transactions || !Array.isArray(transactions)) {
+      return {
+        totalIncome: 0,
+        totalExpenses: 0,
+        totalTransactions: 0
+      };
+    }
 
     return transactions.reduce((totals, transaction) => {
-      if (transaction.categoryId) {
-        const currentTotal = totals.get(transaction.categoryId) || 0;
-        totals.set(
-          transaction.categoryId, 
-          currentTotal + Math.abs(transaction.amount)
-        );
+      if (transaction.type === 'transfer') return totals;
+
+      const amount = Math.abs(transaction.amount);
+      if (transaction.type === 'income') {
+        totals.totalIncome += amount;
+      } else if (transaction.type === 'expense') {
+        totals.totalExpenses += amount;
       }
+      totals.totalTransactions += 1;
       return totals;
-    }, new Map());
-  }, [transactions, categories]);
+    }, {
+      totalIncome: 0,
+      totalExpenses: 0,
+      totalTransactions: 0
+    });
+  }, [transactions]);
 
   const handleBulkDelete = async (categoryIds) => {
     try {
@@ -223,7 +255,7 @@ const Categories = () => {
         ));
       }
 
-      await loadCategories();
+      await loadData();
     } catch (error) {
       setError('Failed to delete categories');
     } finally {
@@ -232,9 +264,9 @@ const Categories = () => {
   };
 
   const canDeleteCategory = useCallback((categoryId) => {
-    const usageCount = categoryUsage.get(categoryId) || 0;
+    const usageCount = categoryStats.get(categoryId)?.count || 0;
     return usageCount === 0;
-  }, [categoryUsage]);
+  }, [categoryStats]);
 
   return (
     <Container maxWidth="xl" sx={{ py: 4 }}>
@@ -258,7 +290,7 @@ const Categories = () => {
               <Button
                 variant="outlined"
                 startIcon={<RefreshIcon />}
-                onClick={loadCategories}
+                onClick={loadData}
                 disabled={loading}
               >
                 Refresh

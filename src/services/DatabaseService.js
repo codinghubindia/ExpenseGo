@@ -234,6 +234,14 @@ class DatabaseService {
   }
 
   static async saveToIndexedDB() {
+    await this.backupToIndexedDB();
+    
+    // Request sync if available
+    if ('serviceWorker' in navigator && 'sync' in registration) {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.sync.register('sync-database');
+    }
+
     try {
       if (!this.idb) {
         throw new Error('IndexedDB not initialized');
@@ -884,34 +892,18 @@ class DatabaseService {
   static async addTransaction(bankId, year, transactionData) {
     try {
       await this.beginTransaction();
-
       const tableName = `transactions_${bankId}_${year}`;
-      const amount = Number(transactionData.amount);
-
-      // For transfers, handle both accounts
-      if (transactionData.type === 'transfer') {
-        // Check balance of source account
-        await this.checkSufficientBalance(bankId, year, transactionData.accountId, amount);
-
-        // Update source account (deduct amount)
-        await this.updateAccountBalance(bankId, year, transactionData.accountId, amount);
-
-        // Update destination account (add amount)
-        await this.updateAccountBalance(bankId, year, transactionData.toAccountId, Math.abs(amount));
-
-      } else {
-        // For regular transactions
-        if (transactionData.type === 'expense') {
-          await this.checkSufficientBalance(bankId, year, transactionData.accountId, amount);
-        }
-        await this.updateAccountBalance(bankId, year, transactionData.accountId, amount);
-      }
-
-      // Insert the transaction
+      
+      // Store timestamps with seconds in UTC format
+      const now = dayjs().format('YYYY-MM-DD HH:mm:ss.SSS');
+      
+      // Convert camelCase to snake_case for database columns
       const formattedData = {
         transaction_id: transactionData.transactionId || Date.now(),
         type: transactionData.type,
-        amount: amount,
+        amount: transactionData.type === 'expense' ? 
+          -Math.abs(Number(transactionData.amount)) : 
+          Math.abs(Number(transactionData.amount)),
         date: transactionData.date,
         account_id: transactionData.accountId,
         to_account_id: transactionData.toAccountId || null,
@@ -919,87 +911,100 @@ class DatabaseService {
         description: transactionData.description || '',
         payment_method: transactionData.paymentMethod || 'cash',
         location: transactionData.location || '',
-        created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-        updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
+        created_at: now,
+        updated_at: now
       };
 
-        const columns = Object.keys(formattedData).join(', ');
-        const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
-        const values = Object.values(formattedData);
+      // Insert the transaction
+      const columns = Object.keys(formattedData).join(', ');
+      const placeholders = Object.keys(formattedData).map(() => '?').join(', ');
+      const values = Object.values(formattedData);
 
       await this.db.exec(`
-          INSERT INTO ${tableName} (${columns})
-          VALUES (${placeholders})
-        `, values);
+        INSERT INTO ${tableName} (${columns})
+        VALUES (${placeholders})
+      `, values);
 
       await this.commitTransaction();
-        return formattedData.transaction_id;
-      } catch (error) {
+      return formattedData.transaction_id;
+    } catch (error) {
       await this.rollbackTransaction();
       throw error;
     }
   }
 
-  static async getTransactions(bankId, year, filters = {}) {
+  static async getTransactions(bankId, year, options = {}) {
+    const { limit = 10, offset = 0 } = options;
+    
     try {
       await this.initializeDatabase();
       const tableName = `transactions_${bankId}_${year}`;
-
-      let query = `
-        SELECT 
-          t.*,
-          a.name as account_name,
-          c.name as category_name
-        FROM ${tableName} t
-        LEFT JOIN accounts_${bankId}_${year} a ON t.account_id = a.account_id
-        LEFT JOIN categories_${bankId}_${year} c ON t.category_id = c.category_id
-        WHERE 1=1
-      `;
-
-      const params = [];
-
-      if (filters.startDate) {
-        query += ` AND t.date >= ?`;
-        params.push(dayjs(filters.startDate).format('YYYY-MM-DD'));
-      }
-
-      if (filters.endDate) {
-        query += ` AND t.date <= ?`;
-        params.push(dayjs(filters.endDate).format('YYYY-MM-DD'));
-      }
-
-      if (filters.accountId) {
-        query += ` AND (t.account_id = ? OR t.to_account_id = ?)`;
-        params.push(filters.accountId, filters.accountId);
-      }
-
-      if (filters.categoryId) {
-        query += ` AND t.category_id = ?`;
-        params.push(filters.categoryId);
-      }
-
-      if (filters.type) {
-        query += ` AND t.type = ?`;
-        params.push(filters.type);
-      }
-
-      query += ` ORDER BY t.date DESC, t.transaction_id DESC`;
-
-      const result = await this.db.exec(query, params);
       
+      // First get the transactions with calculated totals
+      const result = await this.db.exec(`
+        WITH TransactionTotals AS (
+          SELECT 
+            SUM(CASE WHEN type = 'income' THEN ABS(amount) ELSE 0 END) as total_income,
+            SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END) as total_expenses
+          FROM ${tableName}
+          WHERE type != 'transfer'
+        ),
+        TransactionDetails AS (
+          SELECT 
+            t.transaction_id,
+            t.type,
+            t.amount,
+            t.date,
+            t.account_id,
+            t.to_account_id,
+            t.category_id,
+            t.description,
+            t.payment_method,
+            t.location,
+            t.created_at,
+            t.updated_at,
+            a.name as account_name,
+            c.name as category_name
+          FROM ${tableName} t
+          LEFT JOIN accounts_${bankId}_${year} a ON t.account_id = a.account_id
+          LEFT JOIN categories_${bankId}_${year} c ON t.category_id = c.category_id
+          ORDER BY 
+            date(t.date) DESC,
+            datetime(t.updated_at) DESC,
+            datetime(t.created_at) DESC,
+            t.transaction_id DESC
+          LIMIT ? OFFSET ?
+        )
+        SELECT 
+          td.*,
+          tt.total_income,
+          tt.total_expenses
+        FROM TransactionDetails td, TransactionTotals tt
+      `, [limit, offset]);
+
       if (!result[0]?.values) return [];
 
-      return result[0].values.map(row => {
-        const mappedRow = this.mapTransactionRow(row);
-        // Ensure amount is negative for expenses
-        if (mappedRow.type === 'expense' && mappedRow.amount > 0) {
-          mappedRow.amount = -mappedRow.amount;
-        }
-        return mappedRow;
+      // Map the results including the totals
+      const transactions = result[0].values.map(row => {
+        const transaction = this.mapTransactionRow(row.slice(0, 14)); // First 14 columns are transaction details
+        const totals = {
+          totalIncome: Number(row[14]),
+          totalExpenses: Number(row[15])
+        };
+        return { ...transaction, totals };
       });
+
+      // Return both transactions and totals
+      return {
+        transactions,
+        totals: {
+          totalIncome: transactions[0]?.totals.totalIncome || 0,
+          totalExpenses: transactions[0]?.totals.totalExpenses || 0
+        }
+      };
     } catch (error) {
-      this.handleError(error, 'Error getting transactions');
-      return [];
+      console.error('Error getting transactions:', error);
+      return { transactions: [], totals: { totalIncome: 0, totalExpenses: 0 } };
     }
   }
 
@@ -1048,9 +1053,7 @@ class DatabaseService {
   }
 
   static mapTransactionRow(row) {
-    if (!Array.isArray(row) || row.length < 17) {
-      throw new Error('Invalid transaction data format');
-    }
+    if (!Array.isArray(row)) return null;
 
     const [
       transactionId,
@@ -1063,38 +1066,32 @@ class DatabaseService {
       description,
       paymentMethod,
       location,
-      notes,
-      tags,
-      attachments,
       createdAt,
       updatedAt,
       accountName,
       categoryName
     ] = row;
 
-    // Validate required fields
-    if (!transactionId || !type || amount === undefined || !date || !accountId) {
-      throw new Error('Missing required transaction fields');
-    }
+    // Parse dates as UTC
+    const validDate = dayjs(date).isValid() ? date : dayjs().format('YYYY-MM-DD');
+    const validCreatedAt = dayjs(createdAt).isValid() ? createdAt : dayjs().toISOString();
+    const validUpdatedAt = dayjs(updatedAt).isValid() ? updatedAt : validCreatedAt;
 
     return {
       transactionId,
-      type: String(type),
+      type,
       amount: Number(amount),
-      date: dayjs(date).isValid() ? dayjs(date) : dayjs(), // Fallback to current date if invalid
+      date: validDate,
       accountId,
-      toAccountId: toAccountId || null,
-      categoryId: categoryId || null,
-      description: description || '',
-      paymentMethod: paymentMethod || 'cash',
-      location: location || '',
-      notes: notes || '',
-      tags: this.parseJSONSafely(tags) || [],
-      attachments: this.parseJSONSafely(attachments) || [],
-      createdAt: createdAt || new Date().toISOString(),
-      updatedAt: updatedAt || new Date().toISOString(),
-      accountName: accountName || '',
-      categoryName: categoryName || ''
+      toAccountId,
+      categoryId,
+      description,
+      paymentMethod,
+      location,
+      createdAt: validCreatedAt,
+      updatedAt: validUpdatedAt,
+      accountName: accountName || 'Unknown Account',
+      categoryName: categoryName || 'Uncategorized'
     };
   }
 
@@ -1582,13 +1579,28 @@ class DatabaseService {
 
   static async checkSufficientBalance(bankId, year, accountId, amount) {
     try {
-      const currentBalance = await this.getAccountBalance(bankId, year, accountId);
-      if (amount < 0 && Math.abs(amount) > currentBalance) {
-        throw new Error('Insufficient balance for this transaction');
+      const tableName = `accounts_${bankId}_${year}`;
+      
+      // Get current balance
+      const result = await this.db.exec(`
+        SELECT current_balance 
+        FROM ${tableName} 
+        WHERE account_id = ?
+      `, [accountId]);
+
+      if (!result || !result[0] || !result[0].values || !result[0].values[0]) {
+        throw new Error('Account not found');
       }
+
+      const currentBalance = Number(result[0].values[0][0]);
+      
+      // For expenses, amount will be negative, so we use Math.abs()
+      if (currentBalance < Math.abs(amount)) {
+        throw new Error('Insufficient balance');
+      }
+
       return true;
     } catch (error) {
-      this.handleError(error, 'Error checking balance');
       throw error;
     }
   }
@@ -1783,6 +1795,200 @@ class DatabaseService {
     } catch (error) {
       console.error('Error recalculating account balances:', error);
       throw error;
+    }
+  }
+
+  // Add this method to DatabaseService
+  static async getRecentTransactions(bankId, year, limit = 10) {
+    try {
+      await this.initializeDatabase();
+      await this.createBankYearTables(bankId, year);
+      
+      const tableName = `transactions_${bankId}_${year}`;
+      
+      const result = await this.db.exec(`
+        SELECT 
+          t.transaction_id,
+          t.type,
+          t.amount,
+          t.date,
+          t.account_id,
+          t.to_account_id,
+          t.category_id,
+          t.description,
+          t.payment_method,
+          t.location,
+          t.created_at,
+          t.updated_at,
+          a.name as account_name,
+          c.name as category_name
+        FROM ${tableName} t
+        LEFT JOIN accounts_${bankId}_${year} a ON t.account_id = a.account_id
+        LEFT JOIN categories_${bankId}_${year} c ON t.category_id = c.category_id
+        ORDER BY 
+          date(t.date) DESC,
+          datetime(t.updated_at) DESC,
+          datetime(t.created_at) DESC,
+          t.transaction_id DESC
+        LIMIT ?
+      `, [limit]);
+
+      if (!result[0]?.values) return [];
+
+      return result[0].values.map(row => this.mapTransactionRow(row));
+    } catch (error) {
+      console.error('Error getting recent transactions:', error);
+      return [];
+    }
+  }
+
+  // Update the getMonthlyStats method for Dashboard
+  static async getMonthlyStats(bankId, year, month) {
+    try {
+      await this.initializeDatabase();
+      const tableName = `transactions_${bankId}_${year}`;
+      
+      const result = await this.db.exec(`
+        SELECT 
+          SUM(CASE WHEN type = 'income' THEN ABS(amount) ELSE 0 END) as monthly_income,
+          SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END) as monthly_expenses
+        FROM ${tableName}
+        WHERE 
+          type != 'transfer' AND
+          strftime('%Y-%m', date) = ?
+      `, [`${year}-${String(month + 1).padStart(2, '0')}`]);
+
+      if (!result[0]?.values?.[0]) {
+        return { income: 0, expenses: 0, savings: 0, savingsPercentage: 0 };
+      }
+
+      const [monthlyIncome, monthlyExpenses] = result[0].values[0];
+      const income = Number(monthlyIncome) || 0;
+      const expenses = Number(monthlyExpenses) || 0;
+      const savings = income - expenses;
+      const savingsPercentage = income > 0 ? Math.round((savings / income) * 100) : 0;
+
+      return { income, expenses, savings, savingsPercentage };
+    } catch (error) {
+      console.error('Error getting monthly stats:', error);
+      return { income: 0, expenses: 0, savings: 0, savingsPercentage: 0 };
+    }
+  }
+
+  // Add a new method to get all transactions for a specific month
+  static async getMonthTransactions(bankId, year, month) {
+    try {
+      await this.initializeDatabase();
+      const tableName = `transactions_${bankId}_${year}`;
+      
+      const result = await this.db.exec(`
+        WITH TransactionTotals AS (
+          SELECT 
+            SUM(CASE WHEN type = 'income' THEN ABS(amount) ELSE 0 END) as total_income,
+            SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END) as total_expenses
+          FROM ${tableName}
+          WHERE 
+            type != 'transfer' AND
+            strftime('%Y-%m', date) = ?
+        ),
+        TransactionDetails AS (
+          SELECT 
+            t.transaction_id,
+            t.type,
+            t.amount,
+            t.date,
+            t.account_id,
+            t.to_account_id,
+            t.category_id,
+            t.description,
+            t.payment_method,
+            t.location,
+            t.created_at,
+            t.updated_at,
+            a.name as account_name,
+            c.name as category_name
+          FROM ${tableName} t
+          LEFT JOIN accounts_${bankId}_${year} a ON t.account_id = a.account_id
+          LEFT JOIN categories_${bankId}_${year} c ON t.category_id = c.category_id
+          WHERE strftime('%Y-%m', t.date) = ?
+          ORDER BY 
+            date(t.date) DESC,
+            datetime(t.updated_at) DESC,
+            datetime(t.created_at) DESC,
+            t.transaction_id DESC
+        )
+        SELECT 
+          td.*,
+          tt.total_income,
+          tt.total_expenses
+        FROM TransactionDetails td, TransactionTotals tt
+      `, [
+        `${year}-${String(month + 1).padStart(2, '0')}`,
+        `${year}-${String(month + 1).padStart(2, '0')}`
+      ]);
+
+      if (!result[0]?.values) return { transactions: [], totals: { totalIncome: 0, totalExpenses: 0 } };
+
+      const transactions = result[0].values.map(row => {
+        const transaction = this.mapTransactionRow(row.slice(0, 14));
+        const totals = {
+          totalIncome: Number(row[14]),
+          totalExpenses: Number(row[15])
+        };
+        return { ...transaction, totals };
+      });
+
+      return {
+        transactions,
+        totals: {
+          totalIncome: transactions[0]?.totals.totalIncome || 0,
+          totalExpenses: transactions[0]?.totals.totalExpenses || 0
+        }
+      };
+    } catch (error) {
+      console.error('Error getting month transactions:', error);
+      return { transactions: [], totals: { totalIncome: 0, totalExpenses: 0 } };
+    }
+  }
+
+  static async backupToIndexedDB() {
+    try {
+      const dbExport = await this.db.export();
+      const blob = new Blob([dbExport], { type: 'application/octet-stream' });
+      
+      // Store in IndexedDB
+      const backupDB = await openDB('ExpenseGo-Backup', 1, {
+        upgrade(db) {
+          db.createObjectStore('backups');
+        }
+      });
+      
+      await backupDB.put('backups', {
+        data: blob,
+        timestamp: new Date().toISOString()
+      }, 'latest');
+      
+      return true;
+    } catch (error) {
+      console.error('Backup failed:', error);
+      return false;
+    }
+  }
+
+  static async restoreFromIndexedDB() {
+    try {
+      const backupDB = await openDB('ExpenseGo-Backup', 1);
+      const backup = await backupDB.get('backups', 'latest');
+      
+      if (!backup) return false;
+      
+      const arrayBuffer = await backup.data.arrayBuffer();
+      await this.db.import(arrayBuffer);
+      
+      return true;
+    } catch (error) {
+      console.error('Restore failed:', error);
+      return false;
     }
   }
 }

@@ -168,6 +168,7 @@ const Reports = () => {
 
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [accounts, setAccounts] = useState([]);
 
   // Move monthlyStats and topCategory inside useEffect
   const [monthlyStats, setMonthlyStats] = useState({
@@ -192,40 +193,37 @@ const Reports = () => {
   };
 
   useEffect(() => {
-    loadReportData();
+    loadData();
   }, [currentBank, currentYear]);
 
-  const loadReportData = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
 
-      // Add accounts to the Promise.all
-      const [transactionsData, categoriesData, accountsData] = await Promise.all([
+      const [transactionsData, accountsData, categoriesData] = await Promise.all([
         DatabaseService.getTransactions(bankId, year),
-        DatabaseService.getCategories(bankId, year),
-        DatabaseService.getAccounts(bankId, year)
+        DatabaseService.getAccounts(bankId, year),
+        DatabaseService.getCategories(bankId, year)
       ]);
 
-      if (!Array.isArray(transactionsData) || !Array.isArray(categoriesData) || !Array.isArray(accountsData)) {
-        throw new Error('Invalid data received from database');
-      }
-
-      setTransactions(transactionsData);
+      // Use the transactions array from the response
+      setTransactions(transactionsData.transactions || []);
+      setAccounts(accountsData);
       setCategories(categoriesData);
 
       // Calculate stats after data is loaded
-      const stats = getMonthlyComparison(transactionsData);
-      const topCat = getTopCategory(transactionsData, categoriesData);
+      const stats = getMonthlyComparison(transactionsData.transactions || []);
+      const topCat = getTopCategory(transactionsData.transactions || [], categoriesData);
       
       // Prepare chart data with account balances from accounts table
       const chartData = {
-        expensesByCategory: calculateExpensesByCategory(transactionsData, categoriesData),
-        incomeByCategory: calculateIncomeByCategory(transactionsData, categoriesData),
-        cashFlow: calculateCashFlow(transactionsData),
+        expensesByCategory: calculateExpensesByCategory(transactionsData.transactions || [], categoriesData),
+        incomeByCategory: calculateIncomeByCategory(transactionsData.transactions || [], categoriesData),
+        cashFlow: calculateCashFlow(transactionsData.transactions || []),
         accountBalances: calculateAccountBalances(accountsData), // Pass accounts data instead
-        dailyTrends: calculateDailyTrends(transactionsData)
+        dailyTrends: calculateDailyTrends(transactionsData.transactions || [])
       };
       
       setReportData(prevData => ({

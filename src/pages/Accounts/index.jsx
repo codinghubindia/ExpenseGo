@@ -92,34 +92,29 @@ const Accounts = () => {
   const [accountToDelete, setAccountToDelete] = useState(null);
   const { currentBank, currentYear } = useApp();
 
-  const loadData = useCallback(async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      setError(null);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
-      
+
       const [accountsData, transactionsData] = await Promise.all([
         DatabaseService.getAccounts(bankId, year),
         DatabaseService.getTransactions(bankId, year)
       ]);
-      
-      await DatabaseService.recalculateAccountBalances(bankId, year);
-      const updatedAccounts = await DatabaseService.getAccounts(bankId, year);
 
-      setAccounts(updatedAccounts);
-      setTransactions(transactionsData);
+      setAccounts(accountsData);
+      setTransactions(transactionsData.transactions || []);
     } catch (error) {
-      console.error('Error loading accounts:', error);
-      setError('Failed to load accounts. Please try again.');
+      setError('Failed to load accounts data');
     } finally {
       setLoading(false);
     }
-  }, [currentBank, currentYear]);
+  };
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [currentBank, currentYear]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -322,32 +317,27 @@ const Accounts = () => {
   }, [accounts]);
 
   const accountTransactions = useMemo(() => {
-    if (!transactions || !accounts) return new Map();
+    if (!transactions || !Array.isArray(transactions)) return {};
 
-    const summary = new Map();
-    accounts.forEach(account => {
-      summary.set(account.accountId, {
-        income: 0,
-        expenses: 0,
-        transfers: 0
-      });
-    });
-
-    transactions.forEach(transaction => {
-      const accountSummary = summary.get(transaction.accountId);
-      if (accountSummary) {
+    return transactions.reduce((acc, transaction) => {
+      if (transaction.type === 'income' || transaction.type === 'expense') {
+        const accountId = transaction.accountId;
+        if (!acc[accountId]) {
+          acc[accountId] = {
+            income: 0,
+            expenses: 0
+          };
+        }
+        
         if (transaction.type === 'income') {
-          accountSummary.income += Math.abs(transaction.amount);
-        } else if (transaction.type === 'expense') {
-          accountSummary.expenses += Math.abs(transaction.amount);
-        } else if (transaction.type === 'transfer') {
-          accountSummary.transfers += Math.abs(transaction.amount);
+          acc[accountId].income += Math.abs(transaction.amount);
+        } else {
+          acc[accountId].expenses += Math.abs(transaction.amount);
         }
       }
-    });
-
-    return summary;
-  }, [transactions, accounts]);
+      return acc;
+    }, {});
+  }, [transactions]);
 
   return (
     <Box

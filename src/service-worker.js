@@ -56,39 +56,72 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Add version check for cache management
-const CACHE_VERSION = '1.0.0';
-const CACHE_NAME = `expensego-cache-${CACHE_VERSION}`;
+// Customize this with your app's cache name and version
+const CACHE_NAME = 'expensego-v1';
+const STATIC_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/favicon.ico',
+  '/logo192.png',
+  '/logo512.png',
+  // Add other static assets
+];
 
+// Install event - cache static assets
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(STATIC_ASSETS);
+    })
+  );
+  self.skipWaiting();
+});
+
+// Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    Promise.all([
-      self.clients.claim(),
-      // Clean up old caches
-      caches.keys().then((cacheNames) => {
-        return Promise.all(
-          cacheNames.map((cacheName) => {
-            if (cacheName !== CACHE_NAME) {
-              return caches.delete(cacheName);
-            }
-          })
-        );
-      })
-    ])
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames
+          .filter((name) => name !== CACHE_NAME)
+          .map((name) => caches.delete(name))
+      );
+    })
+  );
+  self.clients.claim();
+});
+
+// Fetch event - serve from cache, then network
+self.addEventListener('fetch', (event) => {
+  event.respondWith(
+    caches.match(event.request).then((response) => {
+      return response || fetch(event.request).then((fetchResponse) => {
+        // Cache successful responses
+        if (fetchResponse && fetchResponse.status === 200) {
+          const responseToCache = fetchResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return fetchResponse;
+      });
+    })
   );
 });
 
-// Handle offline fallback
-self.addEventListener('install', (event) => {
-  const offlinePage = new Response(
-    '<html><body><h1>Offline</h1><p>The app is currently offline.</p></body></html>',
-    {
-      headers: { 'Content-Type': 'text/html' },
-    }
-  );
-  event.waitUntil(
-    caches.open('offline').then((cache) => cache.put('/offline.html', offlinePage))
-  );
+// Handle database sync
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-database') {
+    event.waitUntil(syncDatabase());
+  }
+});
+
+// Periodic database backup
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag === 'backup-database') {
+    event.waitUntil(backupDatabase());
+  }
 });
 
 // Add these routes to your workbox configuration

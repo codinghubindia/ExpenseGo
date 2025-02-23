@@ -83,6 +83,9 @@ const Transactions = () => {
   const [selectedTransaction, setSelectedTransaction] = useState(null);
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [transactionToDelete, setTransactionToDelete] = useState(null);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage] = useState(10);
+  const [transactionTotals, setTransactionTotals] = useState({ totalIncome: 0, totalExpenses: 0 });
 
   useEffect(() => {
     loadData();
@@ -93,14 +96,16 @@ const Transactions = () => {
       setLoading(true);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
+      const month = new Date().getMonth();
 
       const [transactionsData, accountsData, categoriesData] = await Promise.all([
-        DatabaseService.getTransactions(bankId, year),
+        DatabaseService.getMonthTransactions(bankId, year, month),
         DatabaseService.getAccounts(bankId, year),
         DatabaseService.getCategories(bankId, year)
       ]);
 
-      setTransactions(transactionsData);
+      setTransactions(transactionsData.transactions);
+      setTransactionTotals(transactionsData.totals);
       setAccounts(accountsData);
       setCategories(categoriesData);
       setError(null);
@@ -150,6 +155,17 @@ const Transactions = () => {
     }).format(amount);
   };
 
+  const formatDate = (date) => {
+    const formattedDate = dayjs(date);
+    return formattedDate.isValid() ? formattedDate.format('MMM D, YYYY') : '';
+  };
+
+  const formatTime = (time) => {
+    if (!time) return '';
+    const formattedTime = dayjs(time);
+    return formattedTime.isValid() ? formattedTime.format('HH:mm') : '';
+  };
+
   const filteredTransactions = useMemo(() => {
     if (!transactions) return [];
     
@@ -180,7 +196,7 @@ const Transactions = () => {
   const groupedTransactions = useMemo(() => {
     if (!filteredTransactions) return [];
 
-    // Sort transactions by date and update/create time (newest first)
+    // Sort transactions by date, update time, and transaction ID
     const sortedTransactions = [...filteredTransactions].sort((a, b) => {
       // First compare by date
       const dateA = dayjs(a.date).startOf('day');
@@ -189,60 +205,32 @@ const Transactions = () => {
       
       if (dateCompare !== 0) return dateCompare;
       
-      // If same date, compare by update/create time
-      const timeA = dayjs(a.updatedAt || a.createdAt);
-      const timeB = dayjs(b.updatedAt || b.createdAt);
-      return timeB.valueOf() - timeA.valueOf();
+      // If same date, compare by update time
+      const timeA = dayjs(a.updatedAt).valueOf();
+      const timeB = dayjs(b.updatedAt).valueOf();
+      if (timeA !== timeB) return timeB - timeA;
+
+      // If update times are same, compare by create time
+      const createTimeA = dayjs(a.createdAt).valueOf();
+      const createTimeB = dayjs(b.createdAt).valueOf();
+      if (createTimeA !== createTimeB) return createTimeB - createTimeA;
+
+      // Finally, use transaction ID as tiebreaker
+      return Number(b.transactionId) - Number(a.transactionId);
     });
 
-    // Group transactions by date
-    const groups = sortedTransactions.reduce((acc, transaction) => {
-      const dateKey = dayjs(transaction.date).format('YYYY-MM-DD');
-      if (!acc[dateKey]) {
-        acc[dateKey] = {
-          date: dateKey,
-          transactions: [],
-          totals: {
-            income: 0,
-            expenses: 0,
-            net: 0
-          }
-        };
-      }
+    // Get paginated slice of transactions
+    const start = page * rowsPerPage;
+    const paginatedTransactions = sortedTransactions.slice(start, start + rowsPerPage);
 
-      // Keep transactions within each group sorted by update/create time
-      const transactions = [...acc[dateKey].transactions, transaction].sort((a, b) => {
-        const timeA = dayjs(a.updatedAt || a.createdAt);
-        const timeB = dayjs(b.updatedAt || b.createdAt);
-        return timeB.valueOf() - timeA.valueOf();
-      });
-
-      acc[dateKey] = {
-        ...acc[dateKey],
-        transactions,
-        totals: transactions.reduce((totals, t) => {
-          if (t.type === 'income') {
-            totals.income += Math.abs(t.amount);
-            totals.net += Math.abs(t.amount);
-          } else if (t.type === 'expense') {
-            totals.expenses += Math.abs(t.amount);
-            totals.net -= Math.abs(t.amount);
-          }
-          return totals;
-        }, { income: 0, expenses: 0, net: 0 })
-      };
-      
-      return acc;
-    }, {});
-
-    // Convert to array and sort by date
-    return Object.values(groups).sort((a, b) => 
-      dayjs(b.date).valueOf() - dayjs(a.date).valueOf()
-    );
-  }, [filteredTransactions]);
+    return paginatedTransactions;
+  }, [filteredTransactions, page, rowsPerPage]);
 
   const transactionSummary = useMemo(() => {
     return filteredTransactions.reduce((summary, transaction) => {
+      // Skip transfer transactions
+      if (transaction.type === 'transfer') return summary;
+
       const amount = Math.abs(transaction.amount);
       if (transaction.type === 'income') {
         summary.totalIncome += amount;
@@ -298,6 +286,57 @@ const Transactions = () => {
 
     return () => clearTimeout(handler);
   }, [filters.search, loadTransactions]);
+
+  const handleNextPage = async () => {
+    const nextPage = page + 1;
+    const neededTransactions = (nextPage + 1) * rowsPerPage;
+    
+    // If we need more transactions, load them
+    if (transactions.length < neededTransactions) {
+      await loadMoreTransactions();
+    }
+    
+    setPage(nextPage);
+  };
+
+  const handlePrevPage = () => {
+    setPage((prevPage) => Math.max(0, prevPage - 1));
+  };
+
+  const getTransactionIcon = (transaction) => {
+    switch (transaction.type) {
+      case 'income':
+        return <ArrowUpward sx={{ color: 'success.main' }} />;
+      case 'expense':
+        return <ArrowDownward sx={{ color: 'error.main' }} />;
+      case 'transfer':
+        return <CompareArrows sx={{ color: 'info.main' }} />;
+      default:
+        return <Payment />;
+    }
+  };
+
+  const loadMoreTransactions = async () => {
+    try {
+      setLoading(true);
+      const bankId = currentBank?.bankId || 1;
+      const year = currentYear || new Date().getFullYear();
+      
+      const offset = transactions.length;
+      const moreTransactions = await DatabaseService.getTransactions(bankId, year, {
+        limit: 10,
+        offset
+      });
+
+      if (moreTransactions.length > 0) {
+        setTransactions(prev => [...prev, ...moreTransactions]);
+      }
+    } catch (err) {
+      setError('Failed to load more transactions');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -508,72 +547,21 @@ const Transactions = () => {
                   </Typography>
                 </Box>
           ) : (
-            <Stack spacing={2}>
-              {groupedTransactions.map((group) => (
-                <Box key={group.date}>
-                  <Box 
-              sx={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center',
-                      mb: 2,
-                      mt: 3
-                    }}
-                  >
-                    <Typography variant="subtitle1" fontWeight="500">
-                      {dayjs(group.date).format('dddd, MMMM D, YYYY')}
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 2 }}>
-                      <Typography variant="body2" color="success.main">
-                        +{formatCurrency(group.totals.income)}
-                      </Typography>
-                      <Typography variant="body2" color="error.main">
-                        -{formatCurrency(group.totals.expenses)}
-                      </Typography>
-                      <Typography 
-                        variant="body2" 
-                        color={group.totals.net >= 0 ? 'success.main' : 'error.main'}
-                        fontWeight="500"
-                      >
-                        {formatCurrency(Math.abs(group.totals.net))}
-                      </Typography>
-                    </Box>
-                  </Box>
-
-                  <Stack spacing={1}>
-                    {group.transactions.map((transaction) => {
+            <Stack spacing={2} sx={{ p: 2 }}>
+              {groupedTransactions.map((transaction) => {
                     const account = accounts.find(a => a.accountId === transaction.accountId);
                     const category = categories.find(c => c.categoryId === transaction.categoryId);
-                    const toAccount = accounts.find(a => a.accountId === transaction.toAccountId);
-
-                // Get appropriate icon based on category or transaction type
-                const getTransactionIcon = () => {
-                  if (transaction.type === 'transfer') return <CompareArrows />;
-                  
-                  switch(category?.name?.toLowerCase()) {
-                    case 'education': return <School />;
-                    case 'food & dining': return <Restaurant />;
-                    case 'shopping': return <ShoppingCart />;
-                    case 'transportation': return <DirectionsCar />;
-                    case 'bills & utilities': return <Receipt />;
-                    case 'entertainment': return <LocalPlay />;
-                    case 'health': return <LocalHospital />;
-                    case 'travel': return <FlightTakeoff />;
-                    case 'general expense': return <AccountBalance />;
-                    case 'other income': return <Payments />;
-                    default: return transaction.type === 'income' ? <ArrowUpward /> : <ArrowDownward />;
-                  }
-                };
                     
                     return (
-                  <Card
+                  <Box
                         key={transaction.transactionId}
-                    elevation={0}
                         sx={{
-                      p: 2,
-                      border: 1,
-                      borderColor: 'divider',
-                          borderRadius: 2,
+                      display: 'flex',
+                      flexDirection: { xs: 'column', sm: 'row' },
+                      alignItems: { xs: 'stretch', sm: 'flex-start' },
+                      justifyContent: 'space-between',
+                      p: 1.5,
+                      borderRadius: 1,
                       '&:hover': {
                             bgcolor: 'action.hover',
                         '& .transaction-actions': {
@@ -583,229 +571,90 @@ const Transactions = () => {
                       }
                     }}
                   >
-                    {/* Mobile View */}
-                    <Box sx={{ display: { xs: 'flex', sm: 'none' }, flexDirection: 'column', gap: 1 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      alignItems: 'flex-start', 
+                      gap: 2,
+                      width: '100%',
+                      mb: { xs: 2, sm: 0 }
+                    }}>
                           <Avatar
                             sx={{
                               bgcolor: transaction.type === 'income' ? 'success.soft' :
                                       transaction.type === 'expense' ? 'error.soft' :
                                       'info.soft',
-                              width: 32,
-                              height: 32
+                          width: 40,
+                          height: 40
                             }}
                           >
-                            {getTransactionIcon()}
+                        {getTransactionIcon(transaction)}
                           </Avatar>
-                          <Box>
-                            <Typography variant="subtitle2" noWrap>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 500 }}>
                               {transaction.description}
                             </Typography>
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                            <Typography variant="caption" color="text.secondary">
-                              {dayjs(transaction.date).format('MMM D, YYYY')}
-                            </Typography>
-                                    <Box
-                                      component="span"
-                                      sx={{
-                                        width: 4,
-                                        height: 4,
-                                        borderRadius: '50%',
-                                        bgcolor: 'text.disabled'
-                                      }}
-                                    />
-                                    <Tooltip title="Last updated">
-                                      <Typography variant="caption" color="text.secondary">
-                                        {dayjs(transaction.updatedAt || transaction.createdAt).format('HH:mm')}
-                                      </Typography>
-                                    </Tooltip>
-                                  </Stack>
-                          </Box>
-                        </Box>
-                        <Typography
-                          variant="subtitle2"
-                          sx={{
-                            color: transaction.type === 'income' ? 'success.main' :
-                                   transaction.type === 'expense' ? 'error.main' :
-                                   'info.main',
-                            fontWeight: 500
-                          }}
+                        <Stack 
+                          direction={{ xs: 'column', sm: 'row' }} 
+                          spacing={{ xs: 0.5, sm: 1 }} 
+                          alignItems={{ xs: 'flex-start', sm: 'center' }}
+                          sx={{ mt: 0.5 }}
                         >
-                          {transaction.type === 'income' ? '+' : 
-                           transaction.type === 'expense' ? '-' : ''}
-                          {formatCurrency(Math.abs(transaction.amount))}
-                        </Typography>
-                      </Box>
-
-                      <Box sx={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: 1,
-                        flexWrap: 'wrap',
-                        mt: 1
-                      }}>
-                        <Chip
-                          size="small"
-                          label={account?.name || ''}
-                          icon={<AccountBalanceWallet sx={{ fontSize: 16 }} />}
-                        />
-                        {category && (
-                          <Chip
-                            size="small"
-                            label={category.name}
-                            icon={<Category sx={{ fontSize: 16 }} />}
-                          />
-                        )}
-                        <Chip
-                          size="small"
-                          label={transaction.paymentMethod.split('_').map(word => 
-                            word.charAt(0).toUpperCase() + word.slice(1)
-                          ).join(' ')}
-                          icon={<Payment sx={{ fontSize: 16 }} />}
-                        />
-                      </Box>
-
-                      <Box sx={{ 
-                        display: 'flex', 
-                        justifyContent: 'flex-end',
-                        gap: 1,
-                        mt: 1
-                      }}>
-                        <Tooltip title="Edit">
-                          <IconButton
-                            size="small"
-                            onClick={() => {
-                              setSelectedTransaction(transaction);
-                              setFormOpen(true);
+                          <Typography 
+                            variant="caption" 
+                            sx={{
+                              color: 'text.secondary',
+                              bgcolor: 'action.hover',
+                              px: 1,
+                              py: 0.5,
+                              borderRadius: '8px',
+                              display: 'inline-block'
                             }}
                           >
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Delete">
-                          <IconButton
-                            size="small"
-                            color="error"
-                            onClick={() => {
-                              setTransactionToDelete(transaction);
-                              setDeleteDialog(true);
-                            }}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Box>
-                    </Box>
-
-                    {/* Desktop View */}
-                    <Box sx={{ display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 2 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
-                        <Avatar
-                          sx={{
-                            bgcolor: transaction.type === 'income' ? 'success.soft' :
-                                    transaction.type === 'expense' ? 'error.soft' :
-                                    'info.soft',
-                            color: transaction.type === 'income' ? 'success.main' :
-                                   transaction.type === 'expense' ? 'error.main' :
-                                   'info.main',
-                            width: 40,
-                            height: 40
-                          }}
-                        >
-                          {getTransactionIcon()}
-                        </Avatar>
-
-                        <Box sx={{ minWidth: 0, flex: 1 }}>
-                          <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                            {transaction.description}
+                            {formatDate(transaction.date)}
                           </Typography>
-                          <Stack direction="row" spacing={1} alignItems="center">
-                              <Typography variant="caption" color="text.secondary">
-                                {dayjs(transaction.date).format('MMM DD, YYYY')}
-                              </Typography>
-                              <Box
-                                component="span"
-                                sx={{
-                                  width: 4,
-                                  height: 4,
-                                  borderRadius: '50%',
-                                  bgcolor: 'text.disabled'
-                                }}
-                              />
-                                    <Tooltip title="Last updated">
-                                      <Typography variant="caption" color="text.secondary">
-                                        {dayjs(transaction.updatedAt || transaction.createdAt).format('HH:mm')}
-                                      </Typography>
-                                    </Tooltip>
-                            <Tooltip title="Account">
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                <AccountBalanceWallet sx={{ fontSize: 14, color: 'text.secondary' }} />
-                              <Typography variant="caption" color="text.secondary">
-                                {account?.name}
-                              </Typography>
-                              </Box>
-                            </Tooltip>
-                              {transaction.type === 'transfer' && toAccount && (
-                                <>
-                                  <ArrowForward sx={{ fontSize: 12, color: 'text.disabled' }} />
-                                  <Typography variant="caption" color="text.secondary">
-                                    {toAccount.name}
-                                  </Typography>
-                                </>
-                              )}
-                              {category && (
-                                <>
-                                  <Box
-                                    component="span"
-                                    sx={{
-                                      width: 4,
-                                      height: 4,
-                                      borderRadius: '50%',
-                                      bgcolor: 'text.disabled'
-                                    }}
-                                  />
-                                <Tooltip title="Category">
-                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                    <Category sx={{ fontSize: 14, color: 'text.secondary' }} />
-                                  <Typography variant="caption" color="text.secondary">
-                                    {category.name}
-                                  </Typography>
-                                  </Box>
-                                </Tooltip>
-                                </>
-                              )}
-                            {transaction.paymentMethod && (
-                              <>
-                                <Box
-                                  component="span"
-                                  sx={{
-                                    width: 4,
-                                    height: 4,
-                                    borderRadius: '50%',
-                                    bgcolor: 'text.disabled'
-                                  }}
-                                />
-                                <Tooltip title="Payment Method">
-                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                    <Payment sx={{ fontSize: 14, color: 'text.secondary' }} />
-                                    <Typography variant="caption" color="text.secondary">
-                                      {transaction.paymentMethod.split('_').map(word => 
-                                        word.charAt(0).toUpperCase() + word.slice(1)
-                                      ).join(' ')}
-                                    </Typography>
-                            </Box>
-                                </Tooltip>
-                              </>
-                            )}
+                          {transaction.categoryName && (
+                            <Typography 
+                              variant="caption" 
+                              sx={{
+                                color: 'text.secondary',
+                                bgcolor: 'action.hover',
+                                px: 1,
+                                py: 0.5,
+                                borderRadius: '8px',
+                                display: 'inline-block'
+                              }}
+                            >
+                              {transaction.type === 'transfer' ? 'Transfer' : 
+                               transaction.categoryName === 'Uncategorized' ? 'Others' : 
+                               transaction.categoryName}
+                            </Typography>
+                          )}
+                          <Typography 
+                            variant="caption" 
+                            sx={{
+                              color: 'text.secondary',
+                              bgcolor: 'action.hover',
+                              px: 1,
+                              py: 0.5,
+                              borderRadius: '8px',
+                              display: 'inline-block'
+                            }}
+                          >
+                            {account?.name || 'Unknown Account'}
+                          </Typography>
                           </Stack>
                           </Box>
                         </Box>
 
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <Box sx={{ textAlign: 'right' }}>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: 2,
+                      width: { xs: '100%', sm: 'auto' },
+                      justifyContent: { xs: 'space-between', sm: 'flex-end' }
+                    }}>
                             <Typography
-                              variant="subtitle1"
+                        variant="subtitle2"
                               sx={{
                                 color: transaction.type === 'income' ? 'success.main' :
                                        transaction.type === 'expense' ? 'error.main' :
@@ -817,42 +666,29 @@ const Transactions = () => {
                                transaction.type === 'expense' ? '-' : ''}
                               {formatCurrency(Math.abs(transaction.amount))}
                             </Typography>
-                            <Chip
-                            label={transaction.type.charAt(0).toUpperCase() + transaction.type.slice(1)}
-                              size="small"
-                              sx={{
-                                bgcolor: transaction.type === 'income' ? 'success.soft' :
-                                        transaction.type === 'expense' ? 'error.soft' :
-                                        'info.soft',
-                                color: transaction.type === 'income' ? 'success.main' :
-                                       transaction.type === 'expense' ? 'error.main' :
-                                       'info.main'
-                              }}
-                            />
-                          </Box>
-
                           <Box 
                           className="transaction-actions"
                             sx={{
                               display: 'flex',
                               gap: 1,
-                              opacity: 0,
-                              visibility: 'hidden',
+                          opacity: { xs: 1, sm: 0 },
+                          visibility: { xs: 'visible', sm: 'hidden' },
                             transition: 'all 0.2s ease-in-out'
                             }}
                           >
-                          <Tooltip title="Edit">
                             <IconButton
                               size="small"
                               onClick={() => {
                                 setSelectedTransaction(transaction);
                                 setFormOpen(true);
                               }}
+                          sx={{ 
+                            bgcolor: 'background.paper',
+                            '&:hover': { bgcolor: 'action.hover' }
+                          }}
                             >
-                              <EditIcon />
+                          <EditIcon fontSize="small" />
                             </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete">
                             <IconButton
                               size="small"
                               color="error"
@@ -860,19 +696,35 @@ const Transactions = () => {
                                 setTransactionToDelete(transaction);
                                 setDeleteDialog(true);
                               }}
+                          sx={{ 
+                            bgcolor: 'background.paper',
+                            '&:hover': { bgcolor: 'error.soft' }
+                          }}
                             >
-                              <DeleteIcon />
+                          <DeleteIcon fontSize="small" />
                             </IconButton>
-                          </Tooltip>
-                        </Box>
                       </Box>
                     </Box>
-                  </Card>
+                  </Box>
                     );
                   })}
-                  </Stack>
-                </Box>
-              ))}
+
+              {/* Pagination */}
+              <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                <Button
+                  disabled={page === 0}
+                  onClick={handlePrevPage}
+                  sx={{ mr: 1 }}
+                >
+                  Previous
+                </Button>
+                <Button
+                  disabled={groupedTransactions.length < rowsPerPage}
+                  onClick={handleNextPage}
+                >
+                  Next
+                </Button>
+              </Box>
                 </Stack>
           )}
             </Card>

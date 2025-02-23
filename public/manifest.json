@@ -1,17 +1,29 @@
 {
   "name": "ExpenseGo",
   "short_name": "ExpenseGo",
-  "description": "A Progressive Web App for managing personal finances",
-  "start_url": "/ExpenseGo/",
+  "description": "Offline-first expense tracking app",
+  "start_url": "/",
   "display": "standalone",
-  "background_color": "#F1F5F9",
-  "theme_color": "#2563EB",
+  "background_color": "#ffffff",
+  "theme_color": "#3B82F6",
   "icons": [
     {
-      "src": "revenue-growth.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512"
     }
-  ]
+  ],
+  "orientation": "portrait",
+  "categories": ["finance", "productivity"],
+  "prefer_related_applications": false
 } 

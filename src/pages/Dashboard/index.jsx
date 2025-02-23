@@ -91,6 +91,11 @@ const DASHBOARD_STYLES = {
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const isPWACompatible = window.matchMedia('(display-mode: browser)').matches && 
+                       ('serviceWorker' in navigator) &&
+                       (isMobileDevice);
+
 const Dashboard = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -103,31 +108,52 @@ const Dashboard = () => {
   const [error, setError] = useState(null);
   const [showInstallPrompt, setShowInstallPrompt] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [monthlyStats, setMonthlyStats] = useState({
+    income: 0,
+    expenses: 0,
+    savings: 0,
+    savingsPercentage: 0
+  });
+  const [reportData, setReportData] = useState({});
 
   const navigate = useNavigate();
 
   const loadData = async () => {
     try {
       setLoading(true);
-      setError(null);
       const bankId = currentBank?.bankId || 1;
       const year = currentYear || new Date().getFullYear();
+      const month = new Date().getMonth();
 
-      const [accountsData, transactionsData, categoriesData] = await Promise.all([
+      const [transactionsData, accountsData, categoriesData, monthlyStats] = await Promise.all([
+        DatabaseService.getMonthTransactions(bankId, year, month),
         DatabaseService.getAccounts(bankId, year),
-        DatabaseService.getTransactions(bankId, year),
-        DatabaseService.getCategories(bankId, year)
+        DatabaseService.getCategories(bankId, year),
+        DatabaseService.getMonthlyStats(bankId, year, month)
       ]);
 
-      await DatabaseService.recalculateAccountBalances(bankId, year);
-      const updatedAccounts = await DatabaseService.getAccounts(bankId, year);
-
-      setAccounts(updatedAccounts);
-      setTransactions(transactionsData);
+      setAccounts(accountsData);
+      setTransactions(transactionsData.transactions || []);
       setCategories(categoriesData);
-    } catch (error) {
-      console.error('Error loading dashboard data:', error);
-      setError('Failed to load dashboard data. Please try again.');
+      setMonthlyStats(monthlyStats);
+
+      // Prepare chart data with account balances from accounts table
+      const chartData = {
+        expensesByCategory: calculateExpensesByCategory(transactionsData.transactions || [], categoriesData),
+        incomeByCategory: calculateIncomeByCategory(transactionsData.transactions || [], categoriesData),
+        cashFlow: calculateCashFlow(transactionsData.transactions || []),
+        accountBalances: calculateAccountBalances(accountsData),
+        dailyTrends: calculateDailyTrends(transactionsData.transactions || [])
+      };
+
+      setReportData(prevData => ({
+        ...prevData,
+        ...chartData
+      }));
+
+    } catch (err) {
+      console.error('Error loading dashboard data:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -138,9 +164,20 @@ const Dashboard = () => {
   }, [currentBank, currentYear]);
 
   useEffect(() => {
+    if (!isPWACompatible) {
+      setShowInstallPrompt(false);
+      return;
+    }
+
     const handleBeforeInstallPrompt = (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
+      
+      if (window.matchMedia('(display-mode: standalone)').matches) {
+        setShowInstallPrompt(false);
+        return;
+      }
+
       setShowInstallPrompt(true);
     };
 
@@ -192,7 +229,9 @@ const Dashboard = () => {
 
     const currentMonthTransactions = transactions.filter(t => {
       const txDate = new Date(t.date);
-      return txDate.getMonth() === currentMonth && txDate.getFullYear() === currentYear;
+      return txDate.getMonth() === currentMonth && 
+             txDate.getFullYear() === currentYear &&
+             t.type !== 'transfer'; // Exclude transfer transactions
     });
 
     const monthlyIncome = currentMonthTransactions
@@ -366,28 +405,6 @@ const Dashboard = () => {
     };
   };
 
-  const monthlyStats = useMemo(() => {
-    const lastMonthBalance = getLastMonthBalance();
-    
-    return {
-      totalExpenses: {
-        amount: balanceStats.monthlyExpenses,
-        change: lastMonthBalance !== 0 ? 
-          ((balanceStats.monthlyExpenses - lastMonthBalance) / lastMonthBalance) * 100 : 0
-      },
-      totalIncome: {
-        amount: balanceStats.monthlyIncome,
-        change: lastMonthBalance !== 0 ? 
-          ((balanceStats.monthlyIncome - lastMonthBalance) / lastMonthBalance) * 100 : 0
-      },
-      netIncome: {
-        amount: balanceStats.monthlySavings,
-        change: lastMonthBalance !== 0 ? 
-          ((balanceStats.monthlySavings - lastMonthBalance) / lastMonthBalance) * 100 : 0
-      }
-    };
-  }, [balanceStats]);
-
   const topCategory = useMemo(() => {
     if (!categoryData.length) return { name: 'No Data', percentage: 0 };
     
@@ -416,39 +433,39 @@ const Dashboard = () => {
       value: formatCurrency(monthlyIncome),
       icon: <TrendingUp />,
       color: theme.palette.success.main,
-      change: monthlyStats.totalIncome.change,
-      trend: monthlyStats.totalIncome.change >= 0 ? 'up' : 'down'
+      change: monthlyStats.income,
+      trend: monthlyStats.income >= 0 ? 'up' : 'down'
     },
     {
       title: "Monthly Expenses",
       value: formatCurrency(monthlyExpenses),
       icon: <TrendingDown />,
       color: theme.palette.error.main,
-      change: monthlyStats.totalExpenses.change,
-      trend: monthlyStats.totalExpenses.change >= 0 ? 'up' : 'down'
+      change: monthlyStats.expenses,
+      trend: monthlyStats.expenses >= 0 ? 'up' : 'down'
     },
     {
       title: "Monthly Savings",
-      value: formatCurrency(savingsData.amount),
-      subtitle: savingsData.amount >= 0 
-        ? `${savingsData.rate}% of income saved` 
+      value: formatCurrency(monthlyStats.savings),
+      subtitle: monthlyStats.savings >= 0 
+        ? `${monthlyStats.savingsPercentage}% of income saved` 
         : 'Expenses exceed income',
-      secondaryInfo: savingsData.change !== 0 && (
+      secondaryInfo: monthlyStats.savings !== 0 && (
         <Typography 
           variant="caption" 
           sx={{ 
-            color: savingsData.trend === 'up' ? 'success.main' : 'error.main',
+            color: monthlyStats.savings >= 0 ? 'success.main' : 'error.main',
             display: 'flex',
             alignItems: 'center',
             gap: 0.5
           }}
         >
-          {savingsData.trend === 'up' ? <TrendingUp fontSize="small" /> : <TrendingDown fontSize="small" />}
-          {Math.abs(savingsData.change).toFixed(1)}% from last month
+          {monthlyStats.savings >= 0 ? <TrendingUp fontSize="small" /> : <TrendingDown fontSize="small" />}
+          {Math.abs(monthlyStats.savings).toFixed(1)}% from last month
         </Typography>
       ),
       icon: <Savings />,
-      color: savingsData.isPositive ? theme.palette.success.main : theme.palette.error.main
+      color: monthlyStats.savings >= 0 ? theme.palette.success.main : theme.palette.error.main
     }
   ];
 
@@ -465,23 +482,123 @@ const Dashboard = () => {
     }
   };
 
-  const recentTransactions = useMemo(() => {
+  const getRecentTransactions = useMemo(() => {
+    if (!transactions || !Array.isArray(transactions)) return [];
+
+    return transactions
+      .sort((a, b) => {
+        const dateA = new Date(a.date);
+        const dateB = new Date(b.date);
+        return dateB - dateA;
+      })
+      .slice(0, 5); // Get only the 5 most recent transactions
+  }, [transactions]);
+
+  const calculateExpensesByCategory = (transactions, categories) => {
+    if (!transactions || !categories) return [];
+
+    const expensesByCategory = new Map();
+    
+    transactions
+      .filter(t => t.type === 'expense')
+      .forEach(transaction => {
+        const category = categories.find(c => c.categoryId === transaction.categoryId);
+        if (category) {
+          const currentTotal = expensesByCategory.get(category.name) || 0;
+          expensesByCategory.set(category.name, currentTotal + Math.abs(transaction.amount));
+        }
+      });
+
+    return Array.from(expensesByCategory.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  };
+
+  const calculateIncomeByCategory = (transactions, categories) => {
+    if (!transactions || !categories) return [];
+
+    const incomeByCategory = new Map();
+    
+    transactions
+      .filter(t => t.type === 'income')
+      .forEach(transaction => {
+        const category = categories.find(c => c.categoryId === transaction.categoryId);
+        if (category) {
+          const currentTotal = incomeByCategory.get(category.name) || 0;
+          incomeByCategory.set(category.name, currentTotal + Math.abs(transaction.amount));
+        }
+      });
+
+    return Array.from(incomeByCategory.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  };
+
+  const calculateCashFlow = (transactions) => {
     if (!transactions) return [];
 
-    return [...transactions]
-      .sort((a, b) => {
-        const dateA = dayjs(a.date).startOf('day');
-        const dateB = dayjs(b.date).startOf('day');
-        const dateCompare = dateB.valueOf() - dateA.valueOf();
+    const cashFlowByDay = new Map();
+    
+    transactions
+      .filter(t => t.type !== 'transfer')
+      .forEach(transaction => {
+        const date = dayjs(transaction.date).format('YYYY-MM-DD');
+        if (!cashFlowByDay.has(date)) {
+          cashFlowByDay.set(date, { income: 0, expenses: 0, net: 0 });
+        }
         
-        if (dateCompare !== 0) return dateCompare;
+        const flow = cashFlowByDay.get(date);
+        const amount = Math.abs(transaction.amount);
         
-        const timeA = dayjs(a.updatedAt || a.createdAt);
-        const timeB = dayjs(b.updatedAt || b.createdAt);
-        return timeB.valueOf() - timeA.valueOf();
-      })
-      .slice(0, 5);
-  }, [transactions]);
+        if (transaction.type === 'income') {
+          flow.income += amount;
+        } else {
+          flow.expenses += amount;
+        }
+        flow.net = flow.income - flow.expenses;
+      });
+
+    return Array.from(cashFlowByDay.entries())
+      .map(([date, values]) => ({
+        date,
+        ...values
+      }))
+      .sort((a, b) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf());
+  };
+
+  const calculateAccountBalances = (accounts) => {
+    if (!accounts) return [];
+    
+    return accounts.map(account => ({
+      name: account.name,
+      balance: account.currentBalance
+    }));
+  };
+
+  const calculateDailyTrends = (transactions) => {
+    if (!transactions) return [];
+
+    const dailyTotals = new Map();
+    
+    transactions
+      .filter(t => t.type !== 'transfer')
+      .forEach(transaction => {
+        const date = dayjs(transaction.date).format('YYYY-MM-DD');
+        if (!dailyTotals.has(date)) {
+          dailyTotals.set(date, { date, total: 0 });
+        }
+        
+        const daily = dailyTotals.get(date);
+        const amount = transaction.type === 'income' ? 
+          Math.abs(transaction.amount) : 
+          -Math.abs(transaction.amount);
+        
+        daily.total += amount;
+      });
+
+    return Array.from(dailyTotals.values())
+      .sort((a, b) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf());
+  };
 
   return (
     <Container 
@@ -492,7 +609,7 @@ const Dashboard = () => {
       }}
     >
       {/* Install Prompt */}
-      {showInstallPrompt && (
+      {showInstallPrompt && isPWACompatible && (
         <Card
           sx={{
             mb: 2,
@@ -501,7 +618,8 @@ const Dashboard = () => {
             border: '1px solid',
             borderColor: 'primary.main',
             borderRadius: 2,
-            overflow: 'hidden'
+            overflow: 'hidden',
+            display: { md: 'none' }
           }}
         >
           <CardContent sx={{ py: 2 }}>
@@ -677,10 +795,10 @@ const Dashboard = () => {
               <Box sx={{ 
                 height: { xs: 300, sm: 350, md: 400 },
                 width: '100%',
-                '.recharts-cartesian-grid-horizontal line:last-child': {
+                '.recharts-cartesian-grid-horizontal line:last-of-type': {
                   strokeOpacity: 0
                 },
-                '.recharts-cartesian-grid-vertical line:first-child, .recharts-cartesian-grid-vertical line:last-child': {
+                '.recharts-cartesian-grid-vertical line:first-of-type, .recharts-cartesian-grid-vertical line:last-of-type': {
                   strokeOpacity: 0
                 }
               }}>
@@ -810,7 +928,7 @@ const Dashboard = () => {
                 </Button>
               </Box>
               <Stack spacing={2}>
-                {recentTransactions.map((transaction) => {
+                {getRecentTransactions.map((transaction) => {
                   const account = accounts.find(a => a.accountId === transaction.accountId);
                   const category = categories.find(c => c.categoryId === transaction.categoryId);
                   
