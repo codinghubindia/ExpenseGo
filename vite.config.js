@@ -7,31 +7,8 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt',
-      devOptions: {
-        enabled: true,
-        type: 'module',
-        navigateFallback: 'index.html'
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,wasm}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/sql\.js\.org\/dist\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'sql-js-cache',
-              expiration: {
-                maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365 // 1 year
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              }
-            }
-          }
-        ]
-      },
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.ico', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         name: 'ExpenseGo',
         short_name: 'ExpenseGo',
@@ -46,6 +23,37 @@ export default defineConfig({
             src: 'favicon.ico',
             sizes: '64x64',
             type: 'image/x-icon'
+          },
+          {
+            src: 'pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any maskable'
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any maskable'
+          }
+        ]
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'],
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/sql\.js\.org\/dist\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'sql-js-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 365
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
+              }
+            }
           }
         ]
       }
