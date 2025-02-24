@@ -60,6 +60,7 @@ import DatabaseService from '../../services/DatabaseService';
 import { useRegion } from '../../contexts/RegionContext';
 import TransactionForm from '../../components/Forms/TransactionForm';
 import DeleteConfirmationDialog from '../../components/Dialogs/DeleteConfirmationDialog';
+import { refreshAccountBalances } from '../Accounts';
 
 const Transactions = () => {
   const theme = useTheme();
@@ -123,8 +124,10 @@ const Transactions = () => {
 
       if (selectedTransaction) {
         await DatabaseService.updateTransaction(bankId, year, selectedTransaction.transactionId, formData);
+        await refreshAccountBalances(bankId, year, setAccounts, setError);
       } else {
         await DatabaseService.addTransaction(bankId, year, formData);
+        await refreshAccountBalances(bankId, year, setAccounts, setError);
       }
 
       await loadData();
@@ -139,7 +142,8 @@ const Transactions = () => {
       try {
         const bankId = currentBank?.bankId || 1;
         const year = currentYear || new Date().getFullYear();
-      await DatabaseService.deleteTransaction(bankId, year, transactionToDelete.transactionId);
+        await DatabaseService.deleteTransaction(bankId, year, transactionToDelete.transactionId);
+        await refreshAccountBalances(bankId, year, setAccounts, setError);
         await loadData();
       setDeleteDialog(false);
       setTransactionToDelete(null);

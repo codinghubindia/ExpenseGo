@@ -68,6 +68,17 @@ const ACCOUNT_ICONS = [
   { icon: '🎓', label: 'Education' }
 ];
 
+// Export the function separately
+export const refreshAccountBalances = async (bankId, year, setAccounts, setError) => {
+  try {
+    await DatabaseService.recalculateAccountBalances(bankId, year);
+    const accountsData = await DatabaseService.getAccounts(bankId, year);
+    setAccounts(accountsData);
+  } catch (error) {
+    setError('Failed to refresh account balances');
+  }
+};
+
 const Accounts = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -251,17 +262,9 @@ const Accounts = () => {
   };
 
   const refreshBalances = async () => {
-    try {
-      const bankId = currentBank?.bankId || 1;
-      const year = currentYear || new Date().getFullYear();
-      
-      await DatabaseService.recalculateAccountBalances(bankId, year);
-      
-      const accountsData = await DatabaseService.getAccounts(bankId, year);
-      setAccounts(accountsData);
-    } catch (error) {
-      setError('Failed to refresh account balances');
-    }
+    const bankId = currentBank?.bankId || 1;
+    const year = currentYear || new Date().getFullYear();
+    await refreshAccountBalances(bankId, year, setAccounts, setError);
   };
 
   const accountBalances = useMemo(() => {
